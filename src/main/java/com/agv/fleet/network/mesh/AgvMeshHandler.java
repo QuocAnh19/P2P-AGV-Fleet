@@ -80,6 +80,39 @@ public class AgvMeshHandler extends SimpleChannelInboundHandler<AgvMessage> {
                 }
                 peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
             }
+            case MUTEX_REQUEST -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getMutexEngine() != null) {
+                    try {
+                        peerManager.getMutexEngine().onMutexRequestReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing MUTEX_REQUEST from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
+            case MUTEX_REPLY -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getMutexEngine() != null) {
+                    try {
+                        peerManager.getMutexEngine().onMutexReplyReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing MUTEX_REPLY from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
+            case MUTEX_RELEASE -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getMutexEngine() != null) {
+                    try {
+                        peerManager.getMutexEngine().onMutexReleaseReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing MUTEX_RELEASE from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
             default -> {
                 // Any application-level message indicates peer liveness
                 peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());

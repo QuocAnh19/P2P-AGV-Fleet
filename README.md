@@ -1,6 +1,9 @@
 # Hệ thống điều phối đội xe tự hành (AGV Fleet) phi tập trung trên nền tảng Pure P2P Event Bus
 
-Dự án hiện thực hóa **Tầng Giao thức Nhị phân (Binary Protocol Codec)** và **Tầng Truyền tải P2P Mesh (Decentralized Mesh Transport Layer)** hiệu năng cao sử dụng **Netty Framework** cho mạng lưới robot tự hành AGV (Autonomous Guided Vehicles).
+Dự án hiện thực hóa trọn gói:
+1. **Tầng Giao thức Nhị phân (Binary Protocol Codec)** hiệu năng cao sử dụng **Netty Framework**.
+2. **Tầng Truyền tải P2P Mesh (Decentralized Mesh Transport Layer)** tự động khám phá và duy trì mạng lưới.
+3. **Tầng Thuật toán Phân tán (Distributed Consensus Layer)**: Đồng hồ logic Lamport và Thuật toán Ricart-Agrawala giải quyết tranh chấp ngã tư (Distributed Mutual Exclusion).
 
 ---
 
@@ -66,23 +69,29 @@ Tổng chiều dài **Fixed Header** là đúng **36 Bytes**, theo chuẩn Big-E
 
 ---
 
-## 3. Kiến trúc Tầng Truyền tải P2P Mesh (Pure P2P)
+## 3. Tầng Thuật toán Phân tán (Distributed Consensus)
 
-Hệ thống hoạt động hoàn toàn phi tập trung (Pure P2P), không sử dụng Broker hay Server trung tâm:
-1. **UDP Multicast Discovery (`UdpPeerDiscovery`)**:
-   - Tham gia multicast group `239.255.0.1:9876` qua Netty `NioDatagramChannel`.
-   - Định kỳ (mỗi 1000ms) phát sóng `HELLO` mang (`nodeId`, `host`, `tcpPort`).
-   - Tự động nhận diện mạng và thông báo cho `PeerManager`.
-2. **Quy tắc Chống Trùng lặp Kết nối (Duplicate Connection Prevention)**:
-   - Khi phát hiện peer mới: Chỉ node có `nodeId` **nhỏ hơn** chủ động tạo kết nối TCP outbound sang node có `nodeId` **lớn hơn**.
-   - Node có ID lớn hơn đóng vai trò chờ kết nối inbound, loại bỏ hoàn toàn tình trạng race condition và kết nối kép giữa 2 xe.
-3. **Xác thực Hai Chiều (Two-Way Handshake)**:
-   - Ngay khi kênh TCP kích hoạt (`channelActive`), mỗi bên chủ động gửi gói `PEER_DISCOVERY (0x01)` chứa ID của mình để bên kia cập nhật định danh và lưu phiên `PeerSession`.
-4. **Heartbeat & Phát hiện Lỗi (Node Failure Detection)**:
-   - Định kỳ mỗi 500ms gửi gói tin `HEARTBEAT (0x02)` tới toàn bộ các peer.
-   - Định kỳ kiểm tra: nếu `currentTime - lastHeartbeatTimestamp > 1500ms` (quá 3 chu kỳ rớt mạng), coi như node đã crash, tự động đóng socket, xóa khỏi `PeerManager` và kích hoạt sự kiện `onPeerDropped(nodeId)`.
-5. **Đồng hồ Logic Lamport (Lamport Clock)**:
-   - Mỗi tin nhắn gửi đi đều được đánh dấu nhãn thời gian logic để phục vụ giải thuật loại trừ tương hỗ (Ricart-Agrawala) và đấu thầu nhiệm vụ (Contract Net).
+### 3.1. Đồng hồ Logic Lamport (`LamportClock`)
+- Cung cấp trật tự một phần (partial ordering) cho toàn bộ sự kiện trong hệ thống:
+  - Sự kiện nội bộ hoặc trước khi phát tin: $L = L + 1$ (`tick()`).
+  - Khi nhận gói tin từ mạng: $L = \max(L, L_{received}) + 1$ (`updateAndGet()`).
+
+### 3.2. Thuật toán Loại trừ Tương hỗ Ricart-Agrawala (`RicartAgrawalaEngine`)
+Giải quyết tranh chấp ngã tư (`cellId`) không có điểm nghẽn trung tâm:
+1. **Trạng thái (`MutexState`)**:
+   - `RELEASED`: Không có nhu cầu đi vào ngã tư -> Sẵn sàng phản hồi `MUTEX_REPLY` ngay cho bất kỳ ai hỏi.
+   - `WANTED`: Đang yêu cầu vào ngã tư -> Đợi thu thập đủ `MUTEX_REPLY` từ tất cả các peer đang active.
+   - `HELD`: Đang độc quyền chiếm giữ ngã tư -> Trì hoãn mọi yêu cầu xin vào ngã tư này (`deferredQueue`).
+2. **Quy tắc Phân định Ưu tiên (Conflict & Deadlock Resolution)**:
+   - Khi Node $A$ (đang `WANTED`) nhận yêu cầu từ Node $B$:
+     - Nếu $A$ có ưu tiên cao hơn: $(L_A < L_B)$ hoặc $(L_A = L_B \text{ và } ID_A < ID_B)$: Node $A$ hoãn trả lời (đưa $B$ vào `deferredQueue`).
+     - Ngược lại: Node $A$ gửi ngay `MUTEX_REPLY` cho $B$.
+3. **Giải phóng Ngã tư (`releaseIntersection`)**:
+   - Chuyển trạng thái sang `RELEASED`.
+   - Gửi ngay `MUTEX_REPLY` cho tất cả các xe đang đợi trong `deferredQueue`.
+   - Broadcast thông báo `MUTEX_RELEASE` cho toàn mạng.
+4. **Tự phục hồi khi Peer sập (`onPeerDropped`)**:
+   - Khi một xe bị crash (phát hiện qua Heartbeat timeout), xe đó tự động bị xóa khỏi `pendingReplies`. Xe đang đợi lập tức được cấp quyền `HELD` an toàn mà không bị deadlock vô tận.
 
 ---
 
@@ -100,7 +109,18 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       ├── common/protocol
     │   │       │   ├── Opcode.java               # Enum 8 mã Opcode kèm O(1) lookup
     │   │       │   ├── AgvHeader.java            # Record bất biến (Đúng 36 Bytes Fixed Header)
-    │   │       │   └── AgvMessage.java           # Domain Model + Factory tính CRC32 tự động
+    │   │       │   ├── AgvMessage.java           # Domain Model + Factory tính CRC32 tự động
+    │   │       │   └── payload
+    │   │       │       ├── MutexRequestPayload.java # Payload nhị phân xin ngã tư
+    │   │       │       ├── MutexReplyPayload.java   # Payload nhị phân chấp thuận
+    │   │       │       └── MutexReleasePayload.java # Payload nhị phân giải phóng
+    │   │       ├── distributed
+    │   │       │   ├── clock
+    │   │       │   │   └── LamportClock.java     # Đồng hồ logic Lamport thread-safe
+    │   │       │   └── mutex
+    │   │       │       ├── MutexState.java       # RELEASED, WANTED, HELD
+    │   │       │       ├── CellMutex.java        # State container cho từng ô ngã tư
+    │   │       │       └── RicartAgrawalaEngine.java # Máy thuật toán Ricart-Agrawala
     │   │       ├── network
     │   │       │   ├── codec
     │   │       │   │   ├── AgvPacketEncoder.java # MessageToByteEncoder<AgvMessage>
@@ -112,7 +132,7 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │       ├── PeerSession.java      # Quản lý phiên kết nối TCP và nhịp tim
     │   │       │       ├── PeerLifecycleListener.java # Callback onPeerConnected & onPeerDropped
     │   │       │       ├── MessageListener.java  # Callback xử lý gói tin ứng dụng
-    │   │       │       ├── AgvMeshHandler.java   # Pipeline Handler: handshake, heartbeat, dispatch
+    │   │       │       ├── AgvMeshHandler.java   # Pipeline Handler: handshake, heartbeat, mutex dispatch
     │   │       │       ├── AgvTcpServer.java     # Netty ServerBootstrap lắng nghe kết nối
     │   │       │       ├── AgvTcpClient.java     # Netty Bootstrap chủ động kết nối peer
     │   │       │       ├── PeerManager.java      # ConcurrentHashMap quản lý Full-Mesh & gửi tin
@@ -124,6 +144,13 @@ D:/HK_V/P2P_AGV_Fleet/Project
     └── test
         └── java
             └── com/agv/fleet
+                ├── common/protocol/payload
+                │   └── MutexPayloadTest.java     # 3 Tests serialization payload
+                ├── distributed
+                │   ├── clock
+                │   │   └── LamportClockTest.java # 3 Tests đồng hồ Lamport
+                │   └── mutex
+                │       └── RicartAgrawalaTest.java# 3 Integration Tests Ricart-Agrawala
                 └── network
                     ├── codec
                     │   └── AgvCodecTest.java     # 8 Unit Tests kiểm thử tầng Binary Codec
@@ -135,20 +162,26 @@ D:/HK_V/P2P_AGV_Fleet/Project
 
 ## 5. Kết quả Kiểm thử (Unit & Integration Tests)
 
-Toàn bộ **11 bài kiểm thử** đều vượt qua 100%:
+Toàn bộ **20 bài kiểm thử** đều vượt qua 100%:
 
 ```
 [INFO] -------------------------------------------------------
 [INFO]  T E S T S
 [INFO] -------------------------------------------------------
+[INFO] Running com.agv.fleet.common.protocol.payload.MutexPayloadTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.054 s
+[INFO] Running com.agv.fleet.distributed.clock.LamportClockTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.046 s
+[INFO] Running com.agv.fleet.distributed.mutex.RicartAgrawalaTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.488 s
 [INFO] Running com.agv.fleet.network.codec.AgvCodecTest
-[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.430 s -- in com.agv.fleet.network.codec.AgvCodecTest
+[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.441 s
 [INFO] Running com.agv.fleet.network.mesh.P2PMeshIntegrationTest
-[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.857 s -- in com.agv.fleet.network.mesh.P2PMeshIntegrationTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.630 s
 [INFO] 
 [INFO] Results:
 [INFO] 
-[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 20, Failures: 0, Errors: 0, Skipped: 0
 [INFO] 
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
@@ -169,12 +202,20 @@ Toàn bộ **11 bài kiểm thử** đều vượt qua 100%:
 | 9 | `P2PMeshIntegrationTest` | `testThreeNodesFullMeshDiscoveryAndConnect()` | Khởi động 3 node độc lập, tự động khám phá qua UDP và kết nối Full-Mesh. | **PASSED** |
 | 10 | `P2PMeshIntegrationTest` | `testBroadcastMessage()` | Node 1 broadcast thông điệp task, Node 2 & 3 nhận được chính xác nội dung. | **PASSED** |
 | 11 | `P2PMeshIntegrationTest` | `testNodeCrashRecovery()` | Tắt đột ngột Node 3, Node 1 & 2 phát hiện timeout nhịp tim và xóa khỏi danh bạ. | **PASSED** |
+| 12 | `LamportClockTest` | `testTick()` | Kiểm tra đồng hồ tăng tuần tự theo sự kiện nội bộ. | **PASSED** |
+| 13 | `LamportClockTest` | `testUpdateWithHigherTimestamp()` | Cập nhật $L = \max(L, L_{recv}) + 1$ với timestamp cao hơn. | **PASSED** |
+| 14 | `LamportClockTest` | `testUpdateWithLowerTimestamp()` | Tiến đồng hồ ngay cả khi nhận timestamp thấp hơn. | **PASSED** |
+| 15 | `MutexPayloadTest` | `testMutexRequestPayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `MutexRequestPayload`. | **PASSED** |
+| 16 | `MutexPayloadTest` | `testMutexReplyPayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `MutexReplyPayload`. | **PASSED** |
+| 17 | `MutexPayloadTest` | `testMutexReleasePayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `MutexReleasePayload`. | **PASSED** |
+| 18 | `RicartAgrawalaTest` | `testSingleNodeImmediateAcquire()` | Mạng 1 node xin ngã tư nhận ngay quyền `HELD` không bị block. | **PASSED** |
+| 19 | `RicartAgrawalaTest` | `testTwoNodesHeadOnCollisionDeadlockResolution()` | 2 node cùng xin ngã tư: Node ưu tiên hơn vào trước, node kia bị block; khi node 1 release, node 2 được cấp quyền; 0 deadlock. | **PASSED** |
+| 20 | `RicartAgrawalaTest` | `testAcquireWithCrashingPeer()` | Node 2 crash khi Node 1 đang đợi: Node 1 tự động phát hiện và thăng cấp `HELD`. | **PASSED** |
 
 ---
 
-## 6. Hướng dẫn Chạy Thử nghiệm
+## 6. Hướng dẫn Chạy Kiểm thử
 
-Chạy toàn bộ test suite từ terminal:
 ```bash
 mvn clean test
 ```

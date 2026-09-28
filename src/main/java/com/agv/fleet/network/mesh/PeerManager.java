@@ -6,6 +6,8 @@ import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Objects;
@@ -29,6 +31,7 @@ public class PeerManager {
     private final CopyOnWriteArrayList<MessageListener> messageListeners = new CopyOnWriteArrayList<>();
 
     private volatile AgvTcpClient tcpClient;
+    private volatile RicartAgrawalaEngine mutexEngine;
 
     public PeerManager(long thisNodeId) {
         this.thisNodeId = thisNodeId;
@@ -36,6 +39,14 @@ public class PeerManager {
 
     public void setTcpClient(AgvTcpClient tcpClient) {
         this.tcpClient = Objects.requireNonNull(tcpClient, "tcpClient cannot be null");
+    }
+
+    public void setMutexEngine(RicartAgrawalaEngine mutexEngine) {
+        this.mutexEngine = mutexEngine;
+    }
+
+    public RicartAgrawalaEngine getMutexEngine() {
+        return mutexEngine;
     }
 
     /**
@@ -166,6 +177,14 @@ public class PeerManager {
                     listener.onPeerDropped(peerId);
                 } catch (Exception e) {
                     log.error("Node {}: Error notifying onPeerDropped for Node {}", thisNodeId, peerId, e);
+                }
+            }
+
+            if (mutexEngine != null) {
+                try {
+                    mutexEngine.onPeerDropped(peerId);
+                } catch (Exception e) {
+                    log.error("Node {}: Error notifying mutexEngine onPeerDropped for Node {}", thisNodeId, peerId, e);
                 }
             }
         }

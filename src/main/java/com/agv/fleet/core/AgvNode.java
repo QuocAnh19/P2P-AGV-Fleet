@@ -9,8 +9,13 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.agv.fleet.distributed.clock.LamportClock;
+import com.agv.fleet.distributed.mutex.MutexState;
+import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
+
 import java.util.Collection;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -26,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>PeerManager with Duplicate Connection Prevention</li>
  *   <li>Periodic Heartbeat and Failure Detection</li>
  *   <li>Logical Lamport Clock for distributed event ordering</li>
+ *   <li>Ricart-Agrawala Distributed Mutual Exclusion for conflict-free intersection crossing</li>
  * </ul>
  */
 public class AgvNode {
@@ -42,9 +48,11 @@ public class AgvNode {
     private final long heartbeatTimeoutMs;
 
     private final AtomicLong sequenceCounter = new AtomicLong(1);
-    private final AtomicLong lamportClock = new AtomicLong(0);
+    private final LamportClock lamportClock = new LamportClock(0);
 
     private final PeerManager peerManager;
+    private final RicartAgrawalaEngine mutexEngine;
+
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
 
@@ -67,6 +75,8 @@ public class AgvNode {
         this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
 
         this.peerManager = new PeerManager(this.nodeId);
+        this.mutexEngine = new RicartAgrawalaEngine(this.nodeId, this.peerManager, this.lamportClock, this::nextSequenceId);
+        this.peerManager.setMutexEngine(this.mutexEngine);
     }
 
     /**
@@ -208,7 +218,7 @@ public class AgvNode {
      * Advances and returns the logical Lamport Clock timestamp.
      */
     public long nextLamportTimestamp() {
-        return lamportClock.incrementAndGet();
+        return lamportClock.tick();
     }
 
     /**
@@ -218,7 +228,38 @@ public class AgvNode {
      * @return updated timestamp
      */
     public long updateLamportClock(long receivedTimestamp) {
-        return lamportClock.updateAndGet(current -> Math.max(current, receivedTimestamp) + 1);
+        return lamportClock.updateAndGet(receivedTimestamp);
+    }
+
+    /**
+     * Requests exclusive entry into an intersection cell using Ricart-Agrawala algorithm.
+     *
+     * @param cellId intersection cell ID
+     * @return CompletableFuture completing when critical section permission is HELD
+     */
+    public CompletableFuture<Void> acquireIntersection(String cellId) {
+        return mutexEngine.acquireIntersection(cellId);
+    }
+
+    /**
+     * Releases an intersection cell currently held by this AGV, granting access to deferred peers.
+     *
+     * @param cellId intersection cell ID
+     */
+    public void releaseIntersection(String cellId) {
+        mutexEngine.releaseIntersection(cellId);
+    }
+
+    public RicartAgrawalaEngine getMutexEngine() {
+        return mutexEngine;
+    }
+
+    public MutexState getMutexState(String cellId) {
+        return mutexEngine.getState(cellId);
+    }
+
+    public LamportClock getLamportClock() {
+        return lamportClock;
     }
 
     /**
