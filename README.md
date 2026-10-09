@@ -4,6 +4,7 @@ Dự án hiện thực hóa trọn gói:
 1. **Tầng Giao thức Nhị phân (Binary Protocol Codec)** hiệu năng cao sử dụng **Netty Framework**.
 2. **Tầng Truyền tải P2P Mesh (Decentralized Mesh Transport Layer)** tự động khám phá và duy trì mạng lưới.
 3. **Tầng Thuật toán Phân tán (Distributed Consensus Layer)**: Đồng hồ logic Lamport và Thuật toán Ricart-Agrawala giải quyết tranh chấp ngã tư (Distributed Mutual Exclusion).
+4. **Tầng Đấu thầu Công việc Tự động (Contract Net Protocol - CNP Engine)**: Phân phối và đấu thầu nhiệm vụ vận chuyển hàng tự động, thích ứng theo khoảng cách và mức pin.
 
 ---
 
@@ -93,6 +94,24 @@ Giải quyết tranh chấp ngã tư (`cellId`) không có điểm nghẽn trung
 4. **Tự phục hồi khi Peer sập (`onPeerDropped`)**:
    - Khi một xe bị crash (phát hiện qua Heartbeat timeout), xe đó tự động bị xóa khỏi `pendingReplies`. Xe đang đợi lập tức được cấp quyền `HELD` an toàn mà không bị deadlock vô tận.
 
+### 3.3. Tầng Đấu thầu Phân tán Contract Net Protocol (`CnpEngine`)
+Phân bổ nhiệm vụ vận chuyển hàng hóa tự động phi tập trung (Multi-Agent System):
+1. **Hàm Mục tiêu Chi phí (Cost Function)**:
+   $$C = 0.5 \times d_{\text{pickup}} + 0.3 \times (100 - B) + 0.2 \times W_{\text{maintenance}}$$
+   - $d_{\text{pickup}} = \sqrt{(x_{\text{pickup}} - x_{\text{agv}})^2 + (y_{\text{pickup}} - y_{\text{agv}})^2}$: Khoảng cách di chuyển tới điểm nhận hàng.
+   - $B \in [0.0, 100.0]$: Mức pin hiện tại của AGV (%).
+   - $W_{\text{maintenance}}$: Trọng số bảo trì kỹ thuật của xe.
+2. **Quy tắc An toàn Pin (Battery Safety Rule)**:
+   - Nếu $B \le 15.0\%$ (Ngưỡng `LOW_BATTERY_THRESHOLD`), AGV kiên quyết từ chối nộp thầu và tự động chuyển trạng thái sang `LOW_BATTERY_CHARGING` để bảo vệ pin.
+3. **Quy tắc Trạng thái Tác tử (`AgentState`)**:
+   - Chỉ AGV ở trạng thái rảnh rỗi (`IDLE`) mới tham gia nộp thầu (`TASK_BID`).
+   - Sau khi nộp thầu, AGV chuyển sang `BIDDING`.
+   - Nếu trúng thầu (`TASK_AWARD`), AGV chuyển sang `BUSY` để thực thi nhiệm vụ.
+   - Nếu trượt thầu, AGV tự động hoàn nguyên về `IDLE`.
+4. **Khả năng Chịu lỗi (Fault-Tolerance)**:
+   - **Thầu phụ (Contractor) sập giữa chừng**: Node quản lý phát hiện mất kết nối qua Heartbeat, tự động hủy phân bổ và tái phát thầu (`re-announce`) để không bị thất lạc đơn hàng.
+   - **Chủ thầu (Manager) sập**: Các xe đang trong trạng thái `BIDDING` tự động hủy gói thầu và hoàn nguyên về `IDLE`.
+
 ---
 
 ## 4. Cấu trúc Thư mục Dự án (Clean Architecture)
@@ -113,14 +132,21 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │   └── payload
     │   │       │       ├── MutexRequestPayload.java # Payload nhị phân xin ngã tư
     │   │       │       ├── MutexReplyPayload.java   # Payload nhị phân chấp thuận
-    │   │       │       └── MutexReleasePayload.java # Payload nhị phân giải phóng
+    │   │       │       ├── MutexReleasePayload.java # Payload nhị phân giải phóng
+    │   │       │       ├── TaskAnnouncePayload.java # Payload nhị phân phát thầu (0x20)
+    │   │       │       ├── TaskBidPayload.java      # Payload nhị phân nộp thầu (0x21)
+    │   │       │       └── TaskAwardPayload.java    # Payload nhị phân trao thầu (0x22)
     │   │       ├── distributed
     │   │       │   ├── clock
     │   │       │   │   └── LamportClock.java     # Đồng hồ logic Lamport thread-safe
-    │   │       │   └── mutex
-    │   │       │       ├── MutexState.java       # RELEASED, WANTED, HELD
-    │   │       │       ├── CellMutex.java        # State container cho từng ô ngã tư
-    │   │       │       └── RicartAgrawalaEngine.java # Máy thuật toán Ricart-Agrawala
+    │   │       │   ├── mutex
+    │   │       │   │   ├── MutexState.java       # RELEASED, WANTED, HELD
+    │   │       │   │   ├── CellMutex.java        # State container cho từng ô ngã tư
+    │   │       │   │   └── RicartAgrawalaEngine.java # Máy thuật toán Ricart-Agrawala
+    │   │       │   └── auction
+    │   │       │       ├── AuctionSession.java   # Phiên đấu thầu theo dõi bids và timeout
+    │   │       │       ├── TaskAssignmentListener.java # Listener sự kiện trúng thầu
+    │   │       │       └── CnpEngine.java        # Bộ máy đấu thầu Contract Net Protocol
     │   │       ├── network
     │   │       │   ├── codec
     │   │       │   │   ├── AgvPacketEncoder.java # MessageToByteEncoder<AgvMessage>
@@ -132,25 +158,33 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │       ├── PeerSession.java      # Quản lý phiên kết nối TCP và nhịp tim
     │   │       │       ├── PeerLifecycleListener.java # Callback onPeerConnected & onPeerDropped
     │   │       │       ├── MessageListener.java  # Callback xử lý gói tin ứng dụng
-    │   │       │       ├── AgvMeshHandler.java   # Pipeline Handler: handshake, heartbeat, mutex dispatch
+    │   │       │       ├── AgvMeshHandler.java   # Pipeline Handler: handshake, heartbeat, mutex & cnp dispatch
     │   │       │       ├── AgvTcpServer.java     # Netty ServerBootstrap lắng nghe kết nối
     │   │       │       ├── AgvTcpClient.java     # Netty Bootstrap chủ động kết nối peer
     │   │       │       ├── PeerManager.java      # ConcurrentHashMap quản lý Full-Mesh & gửi tin
     │   │       │       └── HeartbeatController.java # Tác vụ gửi nhịp tim và timeout detector
     │   │       └── core
-    │   │           └── AgvNode.java              # Lớp wrapper điều phối toàn bộ P2P stack
+    │   │           ├── AgvNode.java              # Lớp wrapper điều phối toàn bộ P2P stack
+    │   │           └── agent
+    │   │               ├── AgentState.java       # IDLE, BIDDING, BUSY, LOW_BATTERY_CHARGING
+    │   │               ├── AgvBattery.java       # Thread-safe battery management (15% threshold)
+    │   │               ├── Position2D.java       # Tọa độ 2D và tính toán khoảng cách không gian
+    │   │               └── Task.java             # Quản lý vòng đời đơn vận chuyển hàng
     │   └── resources
     │       └── logback.xml                       # Cấu hình log Logback
     └── test
         └── java
             └── com/agv/fleet
                 ├── common/protocol/payload
-                │   └── MutexPayloadTest.java     # 3 Tests serialization payload
+                │   ├── MutexPayloadTest.java     # 3 Tests serialization mutex payload
+                │   └── CnpPayloadTest.java       # 4 Tests serialization CNP payload
                 ├── distributed
                 │   ├── clock
                 │   │   └── LamportClockTest.java # 3 Tests đồng hồ Lamport
-                │   └── mutex
-                │       └── RicartAgrawalaTest.java# 3 Integration Tests Ricart-Agrawala
+                │   ├── mutex
+                │   │   └── RicartAgrawalaTest.java# 3 Integration Tests Ricart-Agrawala
+                │   └── auction
+                │       └── CnpAuctionTest.java   # 4 Integration Tests đấu thầu CNP
                 └── network
                     ├── codec
                     │   └── AgvCodecTest.java     # 8 Unit Tests kiểm thử tầng Binary Codec
@@ -162,14 +196,18 @@ D:/HK_V/P2P_AGV_Fleet/Project
 
 ## 5. Kết quả Kiểm thử (Unit & Integration Tests)
 
-Toàn bộ **20 bài kiểm thử** đều vượt qua 100%:
+Toàn bộ **28 bài kiểm thử** đều vượt qua 100%:
 
 ```
 [INFO] -------------------------------------------------------
 [INFO]  T E S T S
 [INFO] -------------------------------------------------------
+[INFO] Running com.agv.fleet.common.protocol.payload.CnpPayloadTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.052 s
 [INFO] Running com.agv.fleet.common.protocol.payload.MutexPayloadTest
-[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.054 s
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s
+[INFO] Running com.agv.fleet.distributed.auction.CnpAuctionTest
+[INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.115 s
 [INFO] Running com.agv.fleet.distributed.clock.LamportClockTest
 [INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.046 s
 [INFO] Running com.agv.fleet.distributed.mutex.RicartAgrawalaTest
@@ -177,11 +215,11 @@ Toàn bộ **20 bài kiểm thử** đều vượt qua 100%:
 [INFO] Running com.agv.fleet.network.codec.AgvCodecTest
 [INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.441 s
 [INFO] Running com.agv.fleet.network.mesh.P2PMeshIntegrationTest
-[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.630 s
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.627 s
 [INFO] 
 [INFO] Results:
 [INFO] 
-[INFO] Tests run: 20, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 28, Failures: 0, Errors: 0, Skipped: 0
 [INFO] 
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
@@ -211,6 +249,14 @@ Toàn bộ **20 bài kiểm thử** đều vượt qua 100%:
 | 18 | `RicartAgrawalaTest` | `testSingleNodeImmediateAcquire()` | Mạng 1 node xin ngã tư nhận ngay quyền `HELD` không bị block. | **PASSED** |
 | 19 | `RicartAgrawalaTest` | `testTwoNodesHeadOnCollisionDeadlockResolution()` | 2 node cùng xin ngã tư: Node ưu tiên hơn vào trước, node kia bị block; khi node 1 release, node 2 được cấp quyền; 0 deadlock. | **PASSED** |
 | 20 | `RicartAgrawalaTest` | `testAcquireWithCrashingPeer()` | Node 2 crash khi Node 1 đang đợi: Node 1 tự động phát hiện và thăng cấp `HELD`. | **PASSED** |
+| 21 | `CnpPayloadTest` | `testTaskAnnouncePayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `TaskAnnouncePayload` (Opcode 0x20). | **PASSED** |
+| 22 | `CnpPayloadTest` | `testTaskBidPayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `TaskBidPayload` (Opcode 0x21). | **PASSED** |
+| 23 | `CnpPayloadTest` | `testTaskAwardPayloadRoundTrip()` | Kiểm tra serialize/deserialize nhị phân `TaskAwardPayload` (Opcode 0x22). | **PASSED** |
+| 24 | `CnpPayloadTest` | `testPayloadValidation()` | Kiểm tra validation ném ngoại lệ khi taskId rỗng hoặc null. | **PASSED** |
+| 25 | `CnpAuctionTest` | `testAdaptiveAuctionBatteryPenalty()` | Xe pin yếu (10% $\le$ 15%) từ chối thầu chuyển sang `LOW_BATTERY_CHARGING`; xe ở xa (8m) pin khỏe (90%) trúng thầu. | **PASSED** |
+| 26 | `CnpAuctionTest` | `testMultipleBiddersSelectsMinCost()` | 3 xe nộp thầu cạnh tranh: Xe có chi phí tối ưu nhất (4.2 điểm) thắng thầu; các xe thua tự động hoàn nguyên `IDLE`. | **PASSED** |
+| 27 | `CnpAuctionTest` | `testBusyAgvIgnoresAuction()` | Xe đang bận (`BUSY`) bỏ qua bản tin phát thầu, không tham gia đấu thầu. | **PASSED** |
+| 28 | `CnpAuctionTest` | `testContractorCrashReAnnouncesTask()` | Xe thầu sập đột ngột khi đang giữ việc: Chủ thầu phát hiện và tự động tái phát thầu (`re-announce`). | **PASSED** |
 
 ---
 

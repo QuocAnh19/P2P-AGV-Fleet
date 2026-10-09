@@ -9,6 +9,13 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.agv.fleet.core.agent.AgentState;
+import com.agv.fleet.core.agent.AgvBattery;
+import com.agv.fleet.core.agent.Position2D;
+import com.agv.fleet.core.agent.Task;
+import com.agv.fleet.distributed.auction.AuctionSession;
+import com.agv.fleet.distributed.auction.CnpEngine;
+import com.agv.fleet.distributed.auction.TaskAssignmentListener;
 import com.agv.fleet.distributed.clock.LamportClock;
 import com.agv.fleet.distributed.mutex.MutexState;
 import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
@@ -16,6 +23,8 @@ import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
 import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -53,6 +62,12 @@ public class AgvNode {
     private final PeerManager peerManager;
     private final RicartAgrawalaEngine mutexEngine;
 
+    private final AgvBattery battery;
+    private volatile Position2D position;
+    private volatile AgentState agentState = AgentState.IDLE;
+    private final ScheduledExecutorService cnpScheduler;
+    private final CnpEngine cnpEngine;
+
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
 
@@ -77,6 +92,28 @@ public class AgvNode {
         this.peerManager = new PeerManager(this.nodeId);
         this.mutexEngine = new RicartAgrawalaEngine(this.nodeId, this.peerManager, this.lamportClock, this::nextSequenceId);
         this.peerManager.setMutexEngine(this.mutexEngine);
+
+        this.battery = new AgvBattery(builder.initialBattery);
+        this.position = builder.initialPosition != null ? builder.initialPosition : new Position2D(0.0, 0.0);
+        this.cnpScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cnp-scheduler-node-" + this.nodeId);
+            t.setDaemon(true);
+            return t;
+        });
+        this.cnpEngine = new CnpEngine(
+                this.nodeId,
+                this.peerManager,
+                this.lamportClock,
+                this::nextSequenceId,
+                this.cnpScheduler,
+                this.battery::getLevel,
+                this::getPosition,
+                this::getAgentState,
+                this::setAgentState,
+                builder.auctionTimeoutMs,
+                builder.maintenanceWeight
+        );
+        this.peerManager.setCnpEngine(this.cnpEngine);
     }
 
     /**
@@ -202,6 +239,11 @@ public class AgvNode {
         }
         if (workerGroup != null) {
             workerGroup.shutdownGracefully(50, 200, TimeUnit.MILLISECONDS);
+        }
+
+        // 6. Stop CNP scheduler
+        if (cnpScheduler != null) {
+            cnpScheduler.shutdownNow();
         }
 
         log.info("AGV Node {} stopped cleanly.", nodeId);
@@ -347,6 +389,52 @@ public class AgvNode {
         return running;
     }
 
+    /**
+     * Announces a task to the network using Contract Net Protocol.
+     *
+     * @param task the transport task to be auctioned
+     * @return AuctionSession representing the bidding round
+     */
+    public AuctionSession announceTask(Task task) {
+        return cnpEngine.announceTask(task);
+    }
+
+    public AgvBattery getBattery() {
+        return battery;
+    }
+
+    public Position2D getPosition() {
+        return position;
+    }
+
+    public void setPosition(Position2D position) {
+        this.position = Objects.requireNonNull(position, "position cannot be null");
+    }
+
+    public void setPosition(double x, double y) {
+        this.position = new Position2D(x, y);
+    }
+
+    public AgentState getAgentState() {
+        return agentState;
+    }
+
+    public void setAgentState(AgentState agentState) {
+        this.agentState = Objects.requireNonNull(agentState, "agentState cannot be null");
+    }
+
+    public CnpEngine getCnpEngine() {
+        return cnpEngine;
+    }
+
+    public void addAssignmentListener(TaskAssignmentListener listener) {
+        cnpEngine.addAssignmentListener(listener);
+    }
+
+    public void removeAssignmentListener(TaskAssignmentListener listener) {
+        cnpEngine.removeAssignmentListener(listener);
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -360,6 +448,10 @@ public class AgvNode {
         private long discoveryIntervalMs = UdpPeerDiscovery.DEFAULT_BROADCAST_INTERVAL_MS;
         private long heartbeatIntervalMs = HeartbeatController.DEFAULT_HEARTBEAT_INTERVAL_MS;
         private long heartbeatTimeoutMs = HeartbeatController.DEFAULT_HEARTBEAT_TIMEOUT_MS;
+        private double initialBattery = AgvBattery.MAX_BATTERY_LEVEL;
+        private Position2D initialPosition = new Position2D(0.0, 0.0);
+        private long auctionTimeoutMs = CnpEngine.DEFAULT_AUCTION_TIMEOUT_MS;
+        private double maintenanceWeight = CnpEngine.DEFAULT_MAINTENANCE_WEIGHT;
 
         public Builder nodeId(long nodeId) {
             this.nodeId = nodeId;
@@ -398,6 +490,31 @@ public class AgvNode {
 
         public Builder heartbeatTimeoutMs(long heartbeatTimeoutMs) {
             this.heartbeatTimeoutMs = heartbeatTimeoutMs;
+            return this;
+        }
+
+        public Builder initialBattery(double initialBattery) {
+            this.initialBattery = initialBattery;
+            return this;
+        }
+
+        public Builder initialPosition(Position2D initialPosition) {
+            this.initialPosition = initialPosition;
+            return this;
+        }
+
+        public Builder initialPosition(double x, double y) {
+            this.initialPosition = new Position2D(x, y);
+            return this;
+        }
+
+        public Builder auctionTimeoutMs(long auctionTimeoutMs) {
+            this.auctionTimeoutMs = auctionTimeoutMs;
+            return this;
+        }
+
+        public Builder maintenanceWeight(double maintenanceWeight) {
+            this.maintenanceWeight = maintenanceWeight;
             return this;
         }
 

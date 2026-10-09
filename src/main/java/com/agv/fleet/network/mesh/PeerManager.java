@@ -6,6 +6,7 @@ import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.agv.fleet.distributed.auction.CnpEngine;
 import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
 
 import java.util.Collection;
@@ -32,6 +33,7 @@ public class PeerManager {
 
     private volatile AgvTcpClient tcpClient;
     private volatile RicartAgrawalaEngine mutexEngine;
+    private volatile CnpEngine cnpEngine;
 
     public PeerManager(long thisNodeId) {
         this.thisNodeId = thisNodeId;
@@ -47,6 +49,14 @@ public class PeerManager {
 
     public RicartAgrawalaEngine getMutexEngine() {
         return mutexEngine;
+    }
+
+    public void setCnpEngine(CnpEngine cnpEngine) {
+        this.cnpEngine = cnpEngine;
+    }
+
+    public CnpEngine getCnpEngine() {
+        return cnpEngine;
     }
 
     /**
@@ -185,6 +195,14 @@ public class PeerManager {
                     mutexEngine.onPeerDropped(peerId);
                 } catch (Exception e) {
                     log.error("Node {}: Error notifying mutexEngine onPeerDropped for Node {}", thisNodeId, peerId, e);
+                }
+            }
+
+            if (cnpEngine != null) {
+                try {
+                    cnpEngine.onPeerDropped(peerId);
+                } catch (Exception e) {
+                    log.error("Node {}: Error notifying cnpEngine onPeerDropped for Node {}", thisNodeId, peerId, e);
                 }
             }
         }

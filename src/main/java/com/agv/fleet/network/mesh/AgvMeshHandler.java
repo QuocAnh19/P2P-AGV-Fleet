@@ -113,6 +113,39 @@ public class AgvMeshHandler extends SimpleChannelInboundHandler<AgvMessage> {
                 }
                 peerManager.dispatchMessage(msg, ctx.channel());
             }
+            case TASK_ANNOUNCE -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getCnpEngine() != null) {
+                    try {
+                        peerManager.getCnpEngine().onTaskAnnounceReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing TASK_ANNOUNCE from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
+            case TASK_BID -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getCnpEngine() != null) {
+                    try {
+                        peerManager.getCnpEngine().onTaskBidReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing TASK_BID from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
+            case TASK_AWARD -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getCnpEngine() != null) {
+                    try {
+                        peerManager.getCnpEngine().onTaskAwardReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing TASK_AWARD from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
             default -> {
                 // Any application-level message indicates peer liveness
                 peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
