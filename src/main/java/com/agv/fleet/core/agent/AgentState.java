@@ -21,7 +21,22 @@ public enum AgentState {
     BUSY,
 
     /**
+     * Agent is currently moving along an assigned route (to pickup or delivery).
+     */
+    MOVING,
+
+    /**
+     * Agent is waiting at an intersection for Ricart-Agrawala mutual exclusion permission.
+     */
+    WAITING_MUTEX,
+
+    /**
      * Battery level is critically low (&lt;= 15%). Agent cannot bid and must navigate to charging station.
      */
-    LOW_BATTERY_CHARGING
+    LOW_BATTERY_CHARGING,
+
+    /**
+     * Agent node was terminated or crashed (simulated failure).
+     */
+    CRASHED
 }

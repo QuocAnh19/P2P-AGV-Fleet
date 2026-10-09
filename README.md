@@ -5,6 +5,7 @@ Dự án hiện thực hóa trọn gói:
 2. **Tầng Truyền tải P2P Mesh (Decentralized Mesh Transport Layer)** tự động khám phá và duy trì mạng lưới.
 3. **Tầng Thuật toán Phân tán (Distributed Consensus Layer)**: Đồng hồ logic Lamport và Thuật toán Ricart-Agrawala giải quyết tranh chấp ngã tư (Distributed Mutual Exclusion).
 4. **Tầng Đấu thầu Công việc Tự động (Contract Net Protocol - CNP Engine)**: Phân phối và đấu thầu nhiệm vụ vận chuyển hàng tự động, thích ứng theo khoảng cách và mức pin.
+5. **Tầng Ứng dụng & Trực quan hóa (Application & Visualization Layer)**: Thuật toán tìm đường Dynamic A* trên bản đồ lưới kho hàng 2D và Giao diện Dashboard mô phỏng JavaFX Canvas 2D mượt mà 60 FPS.
 
 ---
 
@@ -112,6 +113,25 @@ Phân bổ nhiệm vụ vận chuyển hàng hóa tự động phi tập trung (
    - **Thầu phụ (Contractor) sập giữa chừng**: Node quản lý phát hiện mất kết nối qua Heartbeat, tự động hủy phân bổ và tái phát thầu (`re-announce`) để không bị thất lạc đơn hàng.
    - **Chủ thầu (Manager) sập**: Các xe đang trong trạng thái `BIDDING` tự động hủy gói thầu và hoàn nguyên về `IDLE`.
 
+### 3.4. Tầng Điều hướng Dynamic A* và Mô phỏng Trực quan JavaFX Canvas 2D
+1. **Bản đồ Lưới Kho hàng (`GridMap`)**:
+   - Lưới ma trận $24 \times 16$ ô: Kệ hàng (`OBSTACLE`), Ngã tư (`INTERSECTION`), Trạm sạc (`CHARGING_STATION`), Làn đường chạy (`EMPTY`).
+   - Tọa độ nguyên rời rạc `GridPoint(x, y)` hỗ trợ khoảng cách Euclid và Manhattan.
+2. **Thuật toán Dynamic A* Pathfinding (`DynamicAStarPathfinder`)**:
+   - Tìm kiếm đường đi tối ưu $f(n) = g(n) + h(n)$ với Manhattan heuristic.
+   - Tránh vật cản tĩnh (kệ hàng) và vật cản động (vị trí các xe AGV khác đang dừng).
+3. **Bộ điều khiển Vòng đời AGV (`AgvRobot`)**:
+   - Tích hợp mạng Netty `AgvNode`, Ricart-Agrawala Mutex, CNP Engine, Pin `AgvBattery` và bộ dẫn đường A*.
+   - Trước khi đi vào ô ngã tư: Yêu cầu `acquireIntersection(cellId)`, chuyển trạng thái `WAITING_MUTEX`, dừng xe chờ cấp quyền. Khi được cấp quyền mới tiến vào.
+   - Khi đã ra khỏi ô ngã tư: Lập tức gọi `releaseIntersection(cellId)` nhường quyền cho các xe khác.
+   - Tiêu hao pin theo bước di chuyển. Nếu pin $\le 15\%$, tự động ngắt nhận thầu và tìm đường về trạm sạc gần nhất.
+4. **Giao diện Dashboard JavaFX 2D (`AgvFleetSimulatorApp`)**:
+   - Canvas 2D chạy `AnimationTimer` tốc độ mượt mà 30-60 FPS với phép nội suy vị trí mượt mà (Lerp visual coordinate).
+   - Đổi màu AGV theo trạng thái: 🟦 `IDLE`, 🟪 `BIDDING`, 🟩 `MOVING`, 🟧 `WAITING_MUTEX`, 🟥 `CRASHED`.
+   - Bảng Telemetry giám sát tọa độ, pin, Lamport Clock, trạng thái realtime của từng xe.
+   - Cửa sổ nhật ký P2P Wire Traffic / Gossip Log hiển thị toàn bộ gói tin nhị phân bay qua mạng thời gian thực.
+   - Các nút điều khiển tương tác: *"Spawn New Task"*, *"Simulate Head-On Conflict"*, *"Kill Selected AGV"*, *"Add New AGV"*.
+
 ---
 
 ## 4. Cấu trúc Thư mục Dự án (Clean Architecture)
@@ -121,10 +141,12 @@ D:/HK_V/P2P_AGV_Fleet/Project
 ├── pom.xml
 ├── .gitignore
 ├── README.md
+├── ARCHITECTURE_AND_WORKFLOW.md
 └── src
     ├── main
     │   ├── java
     │   │   └── com/agv/fleet
+    │   │       ├── Main.java                     # Lớp chạy chính khởi chạy JavaFX App
     │   │       ├── common/protocol
     │   │       │   ├── Opcode.java               # Enum 8 mã Opcode kèm O(1) lookup
     │   │       │   ├── AgvHeader.java            # Record bất biến (Đúng 36 Bytes Fixed Header)
@@ -163,13 +185,22 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │       ├── AgvTcpClient.java     # Netty Bootstrap chủ động kết nối peer
     │   │       │       ├── PeerManager.java      # ConcurrentHashMap quản lý Full-Mesh & gửi tin
     │   │       │       └── HeartbeatController.java # Tác vụ gửi nhịp tim và timeout detector
-    │   │       └── core
-    │   │           ├── AgvNode.java              # Lớp wrapper điều phối toàn bộ P2P stack
-    │   │           └── agent
-    │   │               ├── AgentState.java       # IDLE, BIDDING, BUSY, LOW_BATTERY_CHARGING
-    │   │               ├── AgvBattery.java       # Thread-safe battery management (15% threshold)
-    │   │               ├── Position2D.java       # Tọa độ 2D và tính toán khoảng cách không gian
-    │   │               └── Task.java             # Quản lý vòng đời đơn vận chuyển hàng
+    │   │       ├── core
+    │   │       │   ├── AgvNode.java              # Lớp wrapper điều phối toàn bộ P2P stack
+    │   │       │   ├── agent
+    │   │       │   │   ├── AgentState.java       # IDLE, BIDDING, BUSY, MOVING, WAITING_MUTEX, CHARGING, CRASHED
+    │   │       │   │   ├── AgvBattery.java       # Quản lý pin thread-safe (ngưỡng 15%)
+    │   │       │   │   ├── Position2D.java       # Tọa độ không gian 2D liên tục
+    │   │       │   │   ├── Task.java             # Quản lý vòng đời đơn vận chuyển hàng
+    │   │       │   │   └── AgvRobot.java         # Điều phối Robot: A*, Mutex, CNP, Chuyển động
+    │   │       │   ├── map
+    │   │       │   │   ├── CellType.java         # EMPTY, OBSTACLE, INTERSECTION, CHARGING_STATION
+    │   │       │   │   ├── GridPoint.java        # Tọa độ nguyên rời rạc 2D
+    │   │       │   │   └── GridMap.java          # Bản đồ kho hàng lưới 24x16
+    │   │       │   └── navigation
+    │   │       │       └── DynamicAStarPathfinder.java # Thuật toán tìm đường Dynamic A*
+    │   │       └── ui
+    │   │           └── AgvFleetSimulatorApp.java # Giao diện Dashboard mô phỏng JavaFX Canvas 2D
     │   └── resources
     │       └── logback.xml                       # Cấu hình log Logback
     └── test
@@ -185,6 +216,11 @@ D:/HK_V/P2P_AGV_Fleet/Project
                 │   │   └── RicartAgrawalaTest.java# 3 Integration Tests Ricart-Agrawala
                 │   └── auction
                 │       └── CnpAuctionTest.java   # 4 Integration Tests đấu thầu CNP
+                ├── core
+                │   ├── map
+                │   │   └── GridMapTest.java      # 3 Tests mô hình bản đồ kho hàng
+                │   └── navigation
+                │       └── AStarPathfinderTest.java # 5 Tests thuật toán tìm đường A*
                 └── network
                     ├── codec
                     │   └── AgvCodecTest.java     # 8 Unit Tests kiểm thử tầng Binary Codec
@@ -196,7 +232,7 @@ D:/HK_V/P2P_AGV_Fleet/Project
 
 ## 5. Kết quả Kiểm thử (Unit & Integration Tests)
 
-Toàn bộ **28 bài kiểm thử** đều vượt qua 100%:
+Toàn bộ **36 bài kiểm thử** đều vượt qua 100%:
 
 ```
 [INFO] -------------------------------------------------------
@@ -206,6 +242,10 @@ Toàn bộ **28 bài kiểm thử** đều vượt qua 100%:
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.052 s
 [INFO] Running com.agv.fleet.common.protocol.payload.MutexPayloadTest
 [INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s
+[INFO] Running com.agv.fleet.core.map.GridMapTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.015 s
+[INFO] Running com.agv.fleet.core.navigation.AStarPathfinderTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s
 [INFO] Running com.agv.fleet.distributed.auction.CnpAuctionTest
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.115 s
 [INFO] Running com.agv.fleet.distributed.clock.LamportClockTest
@@ -215,18 +255,18 @@ Toàn bộ **28 bài kiểm thử** đều vượt qua 100%:
 [INFO] Running com.agv.fleet.network.codec.AgvCodecTest
 [INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.441 s
 [INFO] Running com.agv.fleet.network.mesh.P2PMeshIntegrationTest
-[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.627 s
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.574 s
 [INFO] 
 [INFO] Results:
 [INFO] 
-[INFO] Tests run: 28, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
 [INFO] 
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
 ```
 
-### Chi tiết các kịch bản kiểm thử:
+### Chi tiết 36 kịch bản kiểm thử:
 | STT | File Test | Phương thức Test | Mục tiêu kiểm thử | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: |
 | 1 | `AgvCodecTest` | `testEncodeAndDecodeSingleMessage()` | Mã hóa và giải mã thông điệp hoàn chỉnh, 8 trường header khớp 100%. | **PASSED** |
@@ -257,11 +297,29 @@ Toàn bộ **28 bài kiểm thử** đều vượt qua 100%:
 | 26 | `CnpAuctionTest` | `testMultipleBiddersSelectsMinCost()` | 3 xe nộp thầu cạnh tranh: Xe có chi phí tối ưu nhất (4.2 điểm) thắng thầu; các xe thua tự động hoàn nguyên `IDLE`. | **PASSED** |
 | 27 | `CnpAuctionTest` | `testBusyAgvIgnoresAuction()` | Xe đang bận (`BUSY`) bỏ qua bản tin phát thầu, không tham gia đấu thầu. | **PASSED** |
 | 28 | `CnpAuctionTest` | `testContractorCrashReAnnouncesTask()` | Xe thầu sập đột ngột khi đang giữ việc: Chủ thầu phát hiện và tự động tái phát thầu (`re-announce`). | **PASSED** |
+| 29 | `GridMapTest` | `testGridMapInitialization()` | Khởi tạo lưới 20x15, kiểm tra biên hợp lệ và ngoại lệ kích thước âm. | **PASSED** |
+| 30 | `GridMapTest` | `testCellTypeManagement()` | Quản lý kiểu ô (EMPTY, OBSTACLE, INTERSECTION, CHARGING_STATION) và tính khả hành. | **PASSED** |
+| 31 | `GridMapTest` | `testDefaultWarehouseMap()` | Sinh bản đồ mẫu 24x16 với kệ hàng, ngã tư và trạm sạc gần nhất. | **PASSED** |
+| 32 | `AStarPathfinderTest` | `testStraightLinePath()` | Tìm đường đi thẳng trên ô trống không vật cản. | **PASSED** |
+| 33 | `AStarPathfinderTest` | `testRoutesAroundObstacle()` | Thuật toán A* tự động vòng qua kệ hàng tĩnh. | **PASSED** |
+| 34 | `AStarPathfinderTest` | `testAvoidsDynamicObstacles()` | Thuật toán A* nhận diện và vòng qua vị trí xe AGV khác đang dừng. | **PASSED** |
+| 35 | `AStarPathfinderTest` | `testNoPathAvailable()` | Xử lý an toàn khi đích đến bị bao vây hoàn toàn (trả về danh sách rỗng). | **PASSED** |
+| 36 | `AStarPathfinderTest` | `testStartEqualsGoal()` | Xử lý biên khi điểm xuất phát trùng với đích đến. | **PASSED** |
 
 ---
 
-## 6. Hướng dẫn Chạy Kiểm thử
+## 6. Hướng dẫn Chạy Ứng dụng & Kiểm thử
 
+### 6.1. Chạy toàn bộ Test Suite (36 bài kiểm thử):
 ```bash
 mvn clean test
+```
+
+### 6.2. Khởi chạy Giao diện Mô phỏng JavaFX Dashboard 2D:
+```bash
+mvn javafx:run
+```
+Hoặc chạy trực tiếp lớp chính:
+```bash
+mvn compile exec:java -Dexec.mainClass="com.agv.fleet.Main"
 ```

@@ -10,9 +10,16 @@ Hệ thống được thiết kế theo mô hình **Pure Peer-to-Peer (P2P)** ph
 ```mermaid
 graph TB
     subgraph AGV_Node_Stack ["AGV Autonomous Node Stack"]
+        subgraph Layer5 ["Layer 5: Navigation & JavaFX 2D Canvas Dashboard"]
+            GUI[JavaFX 2D Canvas Simulator Dashboard]
+            RobotLifecycle[AgvRobot: Movement & State Coordinator]
+            AStar[Dynamic A* Pathfinder: Obstacle & Collision Avoidance]
+            GridMap[Warehouse GridMap: 24x16 Layout]
+        end
+
         subgraph Layer4 ["Layer 4: Multi-Agent Coordination (CNP Engine)"]
             CNP[Contract Net Protocol Engine]
-            AgentState[Agent State Machine: IDLE / BIDDING / BUSY / CHARGING]
+            AgentState[Agent State Machine: IDLE / BIDDING / BUSY / MOVING / MUTEX]
             Battery[AgvBattery & Energy Safety Policy]
         end
 
@@ -37,6 +44,7 @@ graph TB
         end
     end
 
+    Layer5 --> Layer4
     Layer4 --> Layer3
     Layer3 --> Layer2
     Layer2 --> Layer1
@@ -234,13 +242,57 @@ sequenceDiagram
 
 ---
 
-## 6. Tổng hợp Bộ Kiểm thử Đã Xác Thực (Verification & Test Suite)
+## 6. Tầng Điều hướng Dynamic A* và Mô phỏng Trực quan JavaFX 2D (Layer 5)
 
-Dự án hiện có **28 bài kiểm thử hoàn chỉnh** (Unit Tests & Multi-Node Integration Tests), tỷ lệ đạt **100% (28/28 PASSED, 0 Failures)**:
+### 6.1. Thuật toán Dynamic A* Pathfinding (`DynamicAStarPathfinder`)
+- Tìm kiếm đường đi ngắn nhất không va chạm từ `(startX, startY)` đến `(goalX, goalY)`:
+  $$f(n) = g(n) + h(n)$$
+  - $g(n)$: Chi phí thực tế tích lũy từ điểm xuất phát (1.0 đơn vị mỗi bước).
+  - $h(n) = |n.x - \text{goal}.x| + |n.y - \text{goal}.y|$: Manhattan heuristic phù hợp cho chuyển động trực giao 4 hướng.
+- Tránh vật cản tĩnh: Kệ hàng (`OBSTACLE`) trong kho.
+- Tránh vật cản động: Vị trí của các xe AGV khác đang dừng đỗ (`dynamicObstacles`).
+
+### 6.2. Vòng đời Điều phối AGV Robot (`AgvRobot`)
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> BIDDING : Nhận TASK_ANNOUNCE & Chi phí hợp lệ
+    IDLE --> LOW_BATTERY_CHARGING : Pin <= 15% (Ngưỡng an toàn)
+    
+    BIDDING --> MOVING : Thắng thầu (TASK_AWARD) -> A* tới Pickup
+    BIDDING --> IDLE : Thua thầu
+    
+    MOVING --> WAITING_MUTEX : Gặp ô ngã tư chưa có quyền
+    WAITING_MUTEX --> MOVING : Nhận đủ MUTEX_REPLY (HELD)
+    
+    MOVING --> IDLE : Giao hàng xong tại Goal
+    LOW_BATTERY_CHARGING --> IDLE : Đã sạc đầy tại trạm
+```
+
+### 6.3. Kiến trúc Giao diện Dashboard JavaFX Canvas 2D (`AgvFleetSimulatorApp`)
+- **Tốc độ hiển thị**: 30-60 FPS với `AnimationTimer` và phép nội suy vị trí mượt mà (Linear Interpolation).
+- **Mã màu trạng thái xe**:
+  - 🟦 `IDLE`: Sẵn sàng nhận việc
+  - 🟪 `BIDDING`: Đang nộp hồ sơ thầu
+  - 🟩 `MOVING`: Đang di chuyển lấy/giao hàng
+  - 🟧 `WAITING_MUTEX`: Đang dừng nhường đường ngã tư
+  - 🟩 `LOW_BATTERY_CHARGING`: Đang sạc tại trạm
+  - 🟥 `CRASHED`: Mô phỏng hỏng hóc / mất nguồn
+- **Tính năng Điều khiển & Tương tác**:
+  - *"Spawn New Task"*: Phát thầu đơn hàng ngẫu nhiên qua CNP.
+  - *"Simulate Head-On Conflict"*: Điều hướng 2 AGV đâm đối đầu qua 1 ngã tư để chứng minh Ricart-Agrawala giải quyết 0 deadlock.
+  - *"Kill Selected AGV"*: Giả lập sập nguồn 1 xe chứng minh tự phục hồi P2P.
+  - *"Add New AGV"*: Khởi tạo node AGV mới tham gia mesh tự động qua UDP discovery.
+
+---
+
+## 7. Tổng hợp Bộ Kiểm thử Đã Xác Thực (Verification & Test Suite)
+
+Dự án hiện có **36 bài kiểm thử hoàn chỉnh** (Unit Tests & Multi-Node Integration Tests), tỷ lệ đạt **100% (36/36 PASSED, 0 Failures)**:
 
 ```
 [INFO] Results:
-[INFO] Tests run: 28, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -253,4 +305,6 @@ Dự án hiện có **28 bài kiểm thử hoàn chỉnh** (Unit Tests & Multi-N
 | **Layer 3: Mutex** | `RicartAgrawalaTest` | 3 | Mạng 1 node xin vào ngã tư ngay, 2 node đâm đối đầu (phân giải theo ID, 0 deadlock), Node crash tự giải phóng ngã tư. |
 | **Layer 4: CNP** | `CnpPayloadTest` | 4 | Round-trip nhị phân `TaskAnnouncePayload`, `TaskBidPayload`, `TaskAwardPayload` và validation. |
 | **Layer 4: CNP** | `CnpAuctionTest` | 4 | Phạt pin yếu ($\le 15\%$) đi sạc; Đa xe nộp thầu chọn min cost; Xe `BUSY` bỏ qua đấu thầu; Tái phát thầu khi thầu phụ crash. |
-| **Tổng cộng** | | **28** | **Toàn bộ 4 tầng hoạt động liền mạch, chuẩn chỉ, thread-safe, không có broker.** |
+| **Layer 5: Map** | `GridMapTest` | 3 | Kích thước bản đồ, phân loại ô (Obstacle, Intersection, Dock), sinh bản đồ kho mẫu 24x16. |
+| **Layer 5: Path** | `AStarPathfinderTest` | 5 | Đường thẳng, vòng qua kệ hàng tĩnh, tránh xe đỗ động, bao vây không lối đi, điểm xuất phát trùng đích. |
+| **Tổng cộng** | | **36** | **Toàn bộ 5 tầng hoạt động hoàn hảo, chuẩn chỉ, thread-safe, không có broker.** |
