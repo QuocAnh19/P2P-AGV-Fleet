@@ -38,9 +38,9 @@ public class AgvPacketDecoder extends LengthFieldBasedFrameDecoder {
     private static final Logger log = LoggerFactory.getLogger(AgvPacketDecoder.class);
 
     /**
-     * Maximum frame size allowed (10 MB).
+     * Maximum frame size allowed (64 KB).
      */
-    public static final int DEFAULT_MAX_FRAME_LENGTH = 10 * 1024 * 1024;
+    public static final int DEFAULT_MAX_FRAME_LENGTH = 64 * 1024;
 
     /**
      * Offset of the length field:
@@ -123,6 +123,8 @@ public class AgvPacketDecoder extends LengthFieldBasedFrameDecoder {
             ));
         }
 
+        int headerOffset = frame.readerIndex();
+
         // 1. Magic Number (2 Bytes, Short)
         short magic = frame.readShort();
         if (magic != AgvHeader.MAGIC_NUMBER) {
@@ -179,8 +181,8 @@ public class AgvPacketDecoder extends LengthFieldBasedFrameDecoder {
             frame.readBytes(payload);
         }
 
-        // Verify CRC32 Integrity
-        long computedChecksum = AgvMessage.calculateCrc32(payload);
+        // Verify CRC32 Integrity over first 32 header bytes (offset 0..31) + payload
+        long computedChecksum = AgvMessage.calculateCrc32(frame, headerOffset, headerOffset + AgvHeader.HEADER_LENGTH, payloadLength);
         if (computedChecksum != expectedChecksum) {
             throw new CorruptedFrameException(String.format(
                     "CRC32 checksum mismatch: expected 0x%08X (%d), computed 0x%08X (%d)",

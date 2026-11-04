@@ -51,7 +51,7 @@ Tổng chiều dài **Fixed Header** là đúng **36 Bytes**, theo chuẩn Big-E
 | **12** | 8 | `long` | **Lamport Timestamp** | Đồng hồ logic Lamport phục vụ sắp xếp thứ tự sự kiện phân tán |
 | **20** | 8 | `long` | **Sender Node ID** | Định danh 64-bit duy nhất của xe AGV gửi |
 | **28** | 4 | `int` | **Payload Length** | Kích thước dữ liệu phần thân ($N \ge 0$) |
-| **32** | 4 | `int` / `uint` | **CRC32 Checksum** | Checksum tính toán từ toàn bộ mảng byte của Payload |
+| **32** | 4 | `int` / `uint` | **CRC32 Checksum** | Checksum tính toán phủ 32 byte đầu của Header (offset 0..31) kết hợp với Payload |
 | **36** | $N$ | `byte[]` | **Payload Data** | Dữ liệu nội dung (JSON / Protobuf / Binary payload) |
 
 ---
@@ -172,7 +172,7 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       ├── network
     │   │       │   ├── codec
     │   │       │   │   ├── AgvPacketEncoder.java # MessageToByteEncoder<AgvMessage>
-    │   │       │   │   └── AgvPacketDecoder.java # LengthFieldBasedFrameDecoder (10MB, offset 28, adj 4)
+    │   │       │   │   └── AgvPacketDecoder.java # LengthFieldBasedFrameDecoder (64KB, offset 28, adj 4)
     │   │       │   ├── discovery
     │   │       │   │   ├── PeerDiscoveryInfo.java# Record thông tin quảng bá UDP
     │   │       │   │   └── UdpPeerDiscovery.java # Netty DatagramChannel UDP Multicast

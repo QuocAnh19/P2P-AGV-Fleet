@@ -241,6 +241,54 @@ class AgvCodecTest {
     }
 
     @Test
+    @DisplayName("4c. Corrupted Lamport Timestamp in Header - Tampering Lamport timestamp causes CorruptedFrameException")
+    void testCorruptedLamportTimestamp() {
+        AgvMessage msg = AgvMessage.create(
+                Opcode.TASK_ANNOUNCE,
+                1001L,
+                42L,
+                8888L,
+                "payload-data".getBytes(StandardCharsets.UTF_8)
+        );
+
+        channel.writeOutbound(msg);
+        ByteBuf frame = channel.readOutbound();
+
+        // Flip 1 bit in Lamport timestamp (offset 12..19)
+        int lamportOffset = 12;
+        byte originalByte = frame.getByte(lamportOffset);
+        frame.setByte(lamportOffset, originalByte ^ 0x01);
+
+        assertThatThrownBy(() -> channel.writeInbound(frame))
+                .isInstanceOf(CorruptedFrameException.class)
+                .hasMessageContaining("CRC32 checksum mismatch");
+    }
+
+    @Test
+    @DisplayName("4d. Corrupted Sender Node ID in Header - Tampering senderNodeId causes CorruptedFrameException")
+    void testCorruptedSenderNodeId() {
+        AgvMessage msg = AgvMessage.create(
+                Opcode.TASK_ANNOUNCE,
+                1001L,
+                42L,
+                8888L,
+                "payload-data".getBytes(StandardCharsets.UTF_8)
+        );
+
+        channel.writeOutbound(msg);
+        ByteBuf frame = channel.readOutbound();
+
+        // Flip 1 bit in Sender Node ID (offset 20..27)
+        int senderNodeIdOffset = 20;
+        byte originalByte = frame.getByte(senderNodeIdOffset);
+        frame.setByte(senderNodeIdOffset, originalByte ^ 0x01);
+
+        assertThatThrownBy(() -> channel.writeInbound(frame))
+                .isInstanceOf(CorruptedFrameException.class)
+                .hasMessageContaining("CRC32 checksum mismatch");
+    }
+
+    @Test
     @DisplayName("5. Invalid Magic Number - Frame rejected")
     void testInvalidMagicNumber() {
         AgvMessage msg = AgvMessage.create(Opcode.PEER_DISCOVERY, 1L, 1L, 100L);
@@ -287,7 +335,8 @@ class AgvCodecTest {
         assertThat(decoded.getOpcode()).isEqualTo(Opcode.HEARTBEAT);
         assertThat(decoded.getPayloadLength()).isZero();
         assertThat(decoded.getPayload()).isEmpty();
-        assertThat(decoded.getHeader().crc32Checksum()).isZero();
+        assertThat(decoded.getHeader().crc32Checksum()).isEqualTo(heartbeat.getHeader().crc32Checksum());
+        assertThat(decoded.getHeader().crc32Checksum()).isNotZero();
         assertThat(decoded.isChecksumValid()).isTrue();
     }
 }
