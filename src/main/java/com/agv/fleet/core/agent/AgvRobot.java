@@ -260,6 +260,11 @@ public class AgvRobot {
                 currentTask.setStatus(Task.Status.COMPLETED);
                 totalTasksCompleted++;
                 log.info("AGV {}: Successfully completed Task {} at destination!", node.getNodeId(), currentTask.getTaskId());
+
+                Long announcerId = currentTask.getAnnouncerNodeId();
+                if (announcerId != null) {
+                    node.notifyTaskComplete(currentTask.getTaskId(), announcerId);
+                }
                 currentTask = null;
                 node.setAgentState(AgentState.IDLE);
             }

@@ -5,6 +5,7 @@ import com.agv.fleet.common.protocol.Opcode;
 import com.agv.fleet.common.protocol.payload.TaskAnnouncePayload;
 import com.agv.fleet.common.protocol.payload.TaskAwardPayload;
 import com.agv.fleet.common.protocol.payload.TaskBidPayload;
+import com.agv.fleet.common.protocol.payload.TaskCompletePayload;
 import com.agv.fleet.core.agent.AgentState;
 import com.agv.fleet.core.agent.AgvBattery;
 import com.agv.fleet.core.agent.Position2D;
@@ -114,6 +115,7 @@ public class CnpEngine {
     public AuctionSession announceTask(Task task) {
         Objects.requireNonNull(task, "task cannot be null");
         task.setStatus(Task.Status.AUCTIONING);
+        task.setAnnouncerNodeId(thisNodeId);
 
         AuctionSession session = new AuctionSession(task, lamportClock.getTime());
         activeAuctions.put(task.getTaskId(), session);
@@ -300,6 +302,8 @@ public class CnpEngine {
             }
             task.setStatus(Task.Status.ASSIGNED);
             task.setAssignedNodeId(thisNodeId);
+            long announcerId = (announce != null) ? announce.announcerNodeId() : message.getHeader().senderNodeId();
+            task.setAnnouncerNodeId(announcerId);
 
             log.info("Node {}: WON auction for task {}! Transitioned state to BUSY.", thisNodeId, taskId);
             for (TaskAssignmentListener listener : assignmentListeners) {
@@ -321,6 +325,33 @@ public class CnpEngine {
         }
 
         mySubmittedBids.remove(taskId);
+    }
+
+    /**
+     * Handles incoming {@link Opcode#TASK_COMPLETE} from a contractor that finished its assigned task.
+     *
+     * @param message incoming message frame
+     */
+    public void onTaskCompleteReceived(AgvMessage message) {
+        lamportClock.updateAndGet(message.getHeader().lamportTimestamp());
+        TaskCompletePayload payload = TaskCompletePayload.fromBytes(message.getPayload());
+        onTaskComplete(payload.taskId(), payload.contractorNodeId());
+    }
+
+    /**
+     * Marks the task as completed and cleanly removes its session from activeAuctions.
+     *
+     * @param taskId           completed task ID
+     * @param contractorNodeId node ID of contractor that completed the task
+     */
+    public void onTaskComplete(String taskId, long contractorNodeId) {
+        log.info("Node {}: Received TASK_COMPLETE for task {} from contractor Node {}",
+                thisNodeId, taskId, contractorNodeId);
+        AuctionSession session = activeAuctions.get(taskId);
+        if (session != null) {
+            session.getTask().setStatus(Task.Status.COMPLETED);
+            activeAuctions.remove(taskId);
+        }
     }
 
     /**

@@ -146,6 +146,17 @@ public class AgvMeshHandler extends SimpleChannelInboundHandler<AgvMessage> {
                 }
                 peerManager.dispatchMessage(msg, ctx.channel());
             }
+            case TASK_COMPLETE -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getCnpEngine() != null) {
+                    try {
+                        peerManager.getCnpEngine().onTaskCompleteReceived(msg);
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing TASK_COMPLETE from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
             default -> {
                 // Any application-level message indicates peer liveness
                 peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());

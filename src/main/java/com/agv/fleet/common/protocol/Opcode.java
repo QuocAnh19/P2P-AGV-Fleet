@@ -54,7 +54,12 @@ public enum Opcode {
     /**
      * Task award notification assigned to winning bidder AGV.
      */
-    TASK_AWARD((byte) 0x22, "Task Award");
+    TASK_AWARD((byte) 0x22, "Task Award"),
+
+    /**
+     * Task completion notification sent by contractor AGV to task announcer.
+     */
+    TASK_COMPLETE((byte) 0x23, "Task Complete");
 
     private final byte code;
     private final String description;

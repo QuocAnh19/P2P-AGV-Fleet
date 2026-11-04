@@ -408,6 +408,30 @@ public class AgvNode {
         return cnpEngine.announceTask(task);
     }
 
+    /**
+     * Notifies the task announcer that the contractor has completed the transport task.
+     *
+     * @param taskId          ID of the completed task
+     * @param announcerNodeId ID of the node that announced and owns the task
+     */
+    public void notifyTaskComplete(String taskId, long announcerNodeId) {
+        log.info("Node {}: Notifying task completion of {} to announcer Node {}", nodeId, taskId, announcerNodeId);
+        if (announcerNodeId == this.nodeId) {
+            cnpEngine.onTaskComplete(taskId, this.nodeId);
+            return;
+        }
+        com.agv.fleet.common.protocol.payload.TaskCompletePayload payload =
+                new com.agv.fleet.common.protocol.payload.TaskCompletePayload(taskId, this.nodeId);
+        AgvMessage msg = AgvMessage.create(
+                Opcode.TASK_COMPLETE,
+                nextSequenceId(),
+                nextLamportTimestamp(),
+                this.nodeId,
+                payload.toBytes()
+        );
+        peerManager.send(announcerNodeId, msg);
+    }
+
     public AgvBattery getBattery() {
         return battery;
     }

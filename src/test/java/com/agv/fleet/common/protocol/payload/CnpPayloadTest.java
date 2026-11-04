@@ -52,6 +52,18 @@ class CnpPayloadTest {
     }
 
     @Test
+    @DisplayName("TaskCompletePayload binary round-trip")
+    void testTaskCompletePayloadRoundTrip() {
+        TaskCompletePayload original = new TaskCompletePayload("TASK-1004", 88L);
+        byte[] bytes = original.toBytes();
+
+        TaskCompletePayload deserialized = TaskCompletePayload.fromBytes(bytes);
+        assertThat(deserialized.taskId()).isEqualTo("TASK-1004");
+        assertThat(deserialized.contractorNodeId()).isEqualTo(88L);
+        assertThat(deserialized).isEqualTo(original);
+    }
+
+    @Test
     @DisplayName("Payload validation rejects invalid input")
     void testPayloadValidation() {
         assertThatThrownBy(() -> new TaskAnnouncePayload("", 0, 0, 0, 0, 1L))

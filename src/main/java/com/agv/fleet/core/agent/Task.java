@@ -42,6 +42,7 @@ public class Task {
     private final ReentrantLock lock = new ReentrantLock();
     private Status status = Status.UNASSIGNED;
     private Long assignedNodeId = null;
+    private Long announcerNodeId = null;
 
     public Task(String taskId, double pickupX, double pickupY, double deliveryX, double deliveryY) {
         this(taskId, pickupX, pickupY, deliveryX, deliveryY, Priority.NORMAL, "Standard Pallet");
@@ -117,6 +118,24 @@ public class Task {
         lock.lock();
         try {
             this.assignedNodeId = assignedNodeId;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Long getAnnouncerNodeId() {
+        lock.lock();
+        try {
+            return announcerNodeId;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void setAnnouncerNodeId(Long announcerNodeId) {
+        lock.lock();
+        try {
+            this.announcerNodeId = announcerNodeId;
         } finally {
             lock.unlock();
         }
