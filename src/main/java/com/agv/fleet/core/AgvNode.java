@@ -65,7 +65,7 @@ public class AgvNode {
     private final AgvBattery battery;
     private volatile Position2D position;
     private volatile AgentState agentState = AgentState.IDLE;
-    private final ScheduledExecutorService cnpScheduler;
+    private volatile ScheduledExecutorService cnpScheduler;
     private final CnpEngine cnpEngine;
 
     private EventLoopGroup bossGroup;
@@ -129,6 +129,15 @@ public class AgvNode {
         }
 
         log.info("Starting AGV Node {} on host {} (requested TCP port: {})...", nodeId, host, requestedTcpPort);
+
+        if (this.cnpScheduler == null || this.cnpScheduler.isShutdown()) {
+            this.cnpScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "cnp-scheduler-node-" + this.nodeId);
+                t.setDaemon(true);
+                return t;
+            });
+            this.cnpEngine.setScheduler(this.cnpScheduler);
+        }
 
         this.bossGroup = new NioEventLoopGroup(1);
         this.workerGroup = new NioEventLoopGroup(4);

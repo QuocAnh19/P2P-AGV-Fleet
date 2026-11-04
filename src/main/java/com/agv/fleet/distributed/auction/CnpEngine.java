@@ -44,7 +44,7 @@ public class CnpEngine {
     private final PeerManager peerManager;
     private final LamportClock lamportClock;
     private final LongSupplier sequenceSupplier;
-    private final ScheduledExecutorService scheduler;
+    private volatile ScheduledExecutorService scheduler;
 
     private final Supplier<Double> batterySupplier;
     private final Supplier<Position2D> positionSupplier;
@@ -95,6 +95,14 @@ public class CnpEngine {
         this.stateConsumer = Objects.requireNonNull(stateConsumer, "stateConsumer cannot be null");
         this.auctionTimeoutMs = auctionTimeoutMs;
         this.maintenanceWeight = maintenanceWeight;
+    }
+
+    public void setScheduler(ScheduledExecutorService scheduler) {
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler cannot be null");
+    }
+
+    public ScheduledExecutorService getScheduler() {
+        return scheduler;
     }
 
     /**
