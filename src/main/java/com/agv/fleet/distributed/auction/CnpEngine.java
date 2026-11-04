@@ -455,6 +455,26 @@ public class CnpEngine {
         return activeAuctions.get(taskId);
     }
 
+    /**
+     * Subscribes this engine to task topic patterns on the overlay TopicRouter.
+     *
+     * @param router topic router
+     */
+    public void subscribe(com.agv.fleet.network.overlay.TopicRouter router) {
+        Objects.requireNonNull(router, "router cannot be null");
+        router.subscribe("task/*", this::handleTaskMessage);
+    }
+
+    private void handleTaskMessage(AgvMessage message) {
+        switch (message.getOpcode()) {
+            case TASK_ANNOUNCE -> onTaskAnnounceReceived(message);
+            case TASK_BID -> onTaskBidReceived(message);
+            case TASK_AWARD -> onTaskAwardReceived(message);
+            case TASK_COMPLETE -> onTaskCompleteReceived(message);
+            default -> {}
+        }
+    }
+
     public long getThisNodeId() {
         return thisNodeId;
     }

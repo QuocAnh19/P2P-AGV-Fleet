@@ -67,118 +67,21 @@ public class AgvMeshHandler extends SimpleChannelInboundHandler<AgvMessage> {
 
         Opcode opcode = msg.getOpcode();
 
-        switch (opcode) {
-            case PEER_DISCOVERY -> {
-                if (log.isDebugEnabled()) {
-                    log.debug("Node {}: Received PEER_DISCOVERY handshake from Node {}", thisNodeId, senderNodeId);
-                }
-                peerManager.registerSession(senderNodeId, ctx.channel());
+        if (opcode == Opcode.PEER_DISCOVERY) {
+            if (log.isDebugEnabled()) {
+                log.debug("Node {}: Received PEER_DISCOVERY handshake from Node {}", thisNodeId, senderNodeId);
             }
-            case HEARTBEAT -> {
-                if (log.isTraceEnabled()) {
-                    log.trace("Node {}: Received HEARTBEAT from Node {}", thisNodeId, senderNodeId);
-                }
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+            peerManager.registerSession(senderNodeId, ctx.channel());
+        } else {
+            if (opcode == Opcode.HEARTBEAT && log.isTraceEnabled()) {
+                log.trace("Node {}: Received HEARTBEAT from Node {}", thisNodeId, senderNodeId);
             }
-            case MUTEX_REQUEST -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getMutexEngine() != null) {
-                    try {
-                        peerManager.getMutexEngine().onMutexRequestReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing MUTEX_REQUEST from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case MUTEX_REPLY -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getMutexEngine() != null) {
-                    try {
-                        peerManager.getMutexEngine().onMutexReplyReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing MUTEX_REPLY from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case MUTEX_RELEASE -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getMutexEngine() != null) {
-                    try {
-                        peerManager.getMutexEngine().onMutexReleaseReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing MUTEX_RELEASE from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case TASK_ANNOUNCE -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getCnpEngine() != null) {
-                    try {
-                        peerManager.getCnpEngine().onTaskAnnounceReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing TASK_ANNOUNCE from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case TASK_BID -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getCnpEngine() != null) {
-                    try {
-                        peerManager.getCnpEngine().onTaskBidReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing TASK_BID from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case TASK_AWARD -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getCnpEngine() != null) {
-                    try {
-                        peerManager.getCnpEngine().onTaskAwardReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing TASK_AWARD from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case TASK_COMPLETE -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getCnpEngine() != null) {
-                    try {
-                        peerManager.getCnpEngine().onTaskCompleteReceived(msg);
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing TASK_COMPLETE from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            case POSITION_UPDATE -> {
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (peerManager.getPositionTable() != null) {
-                    try {
-                        com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
-                                com.agv.fleet.common.protocol.payload.PositionUpdatePayload.fromBytes(msg.getPayload());
-                        peerManager.getPositionTable().update(senderNodeId, payload.x(), payload.y(), payload.targetX(), payload.targetY(), payload.state());
-                    } catch (Exception e) {
-                        log.error("Node {}: Error processing POSITION_UPDATE from Node {}", thisNodeId, senderNodeId, e);
-                    }
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
-            default -> {
-                // Any application-level message indicates peer liveness
-                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
-                if (log.isTraceEnabled()) {
-                    log.trace("Node {}: Received message {} from Node {}", thisNodeId, opcode, senderNodeId);
-                }
-                peerManager.dispatchMessage(msg, ctx.channel());
-            }
+            // Any message from a peer indicates peer liveness
+            peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
         }
+
+        // Dispatch message through PeerManager and TopicRouter overlay
+        peerManager.dispatchMessage(msg, ctx.channel());
     }
 
     @Override

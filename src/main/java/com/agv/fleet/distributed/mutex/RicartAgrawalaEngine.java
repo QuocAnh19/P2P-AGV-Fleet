@@ -379,6 +379,25 @@ public class RicartAgrawalaEngine {
         return lamportClock;
     }
 
+    /**
+     * Subscribes this engine to mutex topic patterns on the overlay TopicRouter.
+     *
+     * @param router topic router
+     */
+    public void subscribe(com.agv.fleet.network.overlay.TopicRouter router) {
+        Objects.requireNonNull(router, "router cannot be null");
+        router.subscribe("mutex/*", this::handleMutexMessage);
+    }
+
+    private void handleMutexMessage(AgvMessage message) {
+        switch (message.getOpcode()) {
+            case MUTEX_REQUEST -> onMutexRequestReceived(message);
+            case MUTEX_REPLY -> onMutexReplyReceived(message);
+            case MUTEX_RELEASE -> onMutexReleaseReceived(message);
+            default -> {}
+        }
+    }
+
     public long getThisNodeId() {
         return thisNodeId;
     }

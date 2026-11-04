@@ -37,8 +37,28 @@ public class PeerManager {
     private volatile com.agv.fleet.core.agent.PeerPositionTable positionTable;
     private volatile boolean frozen = false;
 
+    private final com.agv.fleet.network.overlay.TopicRouter topicRouter;
+
     public PeerManager(long thisNodeId) {
         this.thisNodeId = thisNodeId;
+        this.topicRouter = new com.agv.fleet.network.overlay.TopicRouter();
+
+        // Subscribe position updates to topicRouter
+        this.topicRouter.subscribe("nav/position", msg -> {
+            if (positionTable != null) {
+                try {
+                    com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
+                            com.agv.fleet.common.protocol.payload.PositionUpdatePayload.fromBytes(msg.getPayload());
+                    positionTable.update(msg.getSenderNodeId(), payload.x(), payload.y(), payload.targetX(), payload.targetY(), payload.state());
+                } catch (Exception e) {
+                    log.error("Node {}: Error processing POSITION_UPDATE from Node {}", thisNodeId, msg.getSenderNodeId(), e);
+                }
+            }
+        });
+    }
+
+    public com.agv.fleet.network.overlay.TopicRouter getTopicRouter() {
+        return topicRouter;
     }
 
     public void setTcpClient(AgvTcpClient tcpClient) {
@@ -47,6 +67,9 @@ public class PeerManager {
 
     public void setMutexEngine(RicartAgrawalaEngine mutexEngine) {
         this.mutexEngine = mutexEngine;
+        if (mutexEngine != null) {
+            mutexEngine.subscribe(this.topicRouter);
+        }
     }
 
     public RicartAgrawalaEngine getMutexEngine() {
@@ -55,6 +78,9 @@ public class PeerManager {
 
     public void setCnpEngine(CnpEngine cnpEngine) {
         this.cnpEngine = cnpEngine;
+        if (cnpEngine != null) {
+            cnpEngine.subscribe(this.topicRouter);
+        }
     }
 
     public CnpEngine getCnpEngine() {
@@ -294,6 +320,13 @@ public class PeerManager {
         if (frozen) {
             return;
         }
+
+        // Route through TopicRouter overlay
+        String topic = com.agv.fleet.network.overlay.TopicRouter.topicFor(message.getOpcode());
+        if (topic != null) {
+            topicRouter.publish(topic, message);
+        }
+
         for (MessageListener listener : messageListeners) {
             try {
                 listener.onMessageReceived(message, channel);
