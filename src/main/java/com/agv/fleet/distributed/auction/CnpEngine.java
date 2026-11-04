@@ -106,6 +106,10 @@ public class CnpEngine {
         return scheduler;
     }
 
+    public ConcurrentMap<String, Long> getMySubmittedBids() {
+        return mySubmittedBids;
+    }
+
     /**
      * Initiates a new task auction by broadcasting a {@link Opcode#TASK_ANNOUNCE} frame.
      *
@@ -198,6 +202,17 @@ public class CnpEngine {
         stateConsumer.accept(AgentState.BIDDING);
         mySubmittedBids.put(payload.taskId(), payload.announcerNodeId());
 
+        // Bidder fallback timeout: if no award received within 3 * auctionTimeoutMs, revert to IDLE
+        scheduler.schedule(() -> {
+            if (mySubmittedBids.remove(payload.taskId()) != null) {
+                if (stateSupplier.get() == AgentState.BIDDING) {
+                    stateConsumer.accept(AgentState.IDLE);
+                    log.warn("Node {}: Fallback timeout ({}ms) expired for task {}. Reverted to IDLE.",
+                            thisNodeId, 3 * auctionTimeoutMs, payload.taskId());
+                }
+            }
+        }, 3 * auctionTimeoutMs, TimeUnit.MILLISECONDS);
+
         TaskBidPayload bidPayload = new TaskBidPayload(payload.taskId(), thisNodeId, cost, battery);
         long timestamp = lamportClock.tick();
         AgvMessage bidMsg = AgvMessage.create(
@@ -245,8 +260,38 @@ public class CnpEngine {
         if (bids.isEmpty()) {
             log.info("Node {}: Auction closed for task {} with 0 bids. Reverting task to UNASSIGNED.",
                     thisNodeId, taskId);
-            session.getTask().setStatus(Task.Status.UNASSIGNED);
+            Task task = session.getTask();
+            task.setStatus(Task.Status.UNASSIGNED);
             session.getAwardFuture().complete(-1L);
+            activeAuctions.remove(taskId);
+
+            // Broadcast TASK_AWARD with winnerNodeId = -1 to reset bidders to IDLE
+            TaskAwardPayload awardPayload = new TaskAwardPayload(taskId, -1L);
+            long timestamp = lamportClock.tick();
+            AgvMessage awardMsg = AgvMessage.create(
+                    Opcode.TASK_AWARD,
+                    sequenceSupplier.getAsLong(),
+                    timestamp,
+                    thisNodeId,
+                    awardPayload.toBytes()
+            );
+            peerManager.broadcast(awardMsg);
+
+            // Retry with exponential backoff (500ms, 1s, 2s, max 5 attempts)
+            int attempts = task.incrementRetryCount();
+            if (attempts <= 5) {
+                long backoffMs = Math.min(2000L, 500L * (1L << (attempts - 1)));
+                log.info("Node {}: Scheduling retry {} for task {} in {}ms", thisNodeId, attempts, taskId, backoffMs);
+                scheduler.schedule(() -> {
+                    if (task.getStatus() == Task.Status.UNASSIGNED) {
+                        announceTask(task);
+                    }
+                }, backoffMs, TimeUnit.MILLISECONDS);
+            } else {
+                task.setStatus(Task.Status.FAILED);
+                log.warn("Node {}: Task {} reached max retry attempts ({}) without bids. Marked as FAILED.",
+                        thisNodeId, taskId, attempts);
+            }
             return;
         }
 
@@ -314,12 +359,17 @@ public class CnpEngine {
                 }
             }
         } else {
-            // Another AGV won. If this AGV was bidding for this task, revert to IDLE
+            // Another AGV won or winnerNodeId == -1 (no winner). If this AGV was bidding for this task, revert to IDLE
             if (mySubmittedBids.containsKey(taskId)) {
                 if (stateSupplier.get() == AgentState.BIDDING) {
                     stateConsumer.accept(AgentState.IDLE);
-                    log.info("Node {}: Lost auction for task {} to Node {}. Reverted state to IDLE.",
-                            thisNodeId, taskId, winnerNodeId);
+                    if (winnerNodeId == -1L) {
+                        log.info("Node {}: Auction for task {} ended with no winner (-1). Reverted state to IDLE.",
+                                thisNodeId, taskId);
+                    } else {
+                        log.info("Node {}: Lost auction for task {} to Node {}. Reverted state to IDLE.",
+                                thisNodeId, taskId, winnerNodeId);
+                    }
                 }
             }
         }

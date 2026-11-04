@@ -17,7 +17,8 @@ public class Task {
         ASSIGNED,
         IN_TRANSIT,
         COMPLETED,
-        CANCELLED
+        CANCELLED,
+        FAILED
     }
 
     /**
@@ -43,6 +44,7 @@ public class Task {
     private Status status = Status.UNASSIGNED;
     private Long assignedNodeId = null;
     private Long announcerNodeId = null;
+    private int retryCount = 0;
 
     public Task(String taskId, double pickupX, double pickupY, double deliveryX, double deliveryY) {
         this(taskId, pickupX, pickupY, deliveryX, deliveryY, Priority.NORMAL, "Standard Pallet");
@@ -136,6 +138,24 @@ public class Task {
         lock.lock();
         try {
             this.announcerNodeId = announcerNodeId;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int getRetryCount() {
+        lock.lock();
+        try {
+            return retryCount;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public int incrementRetryCount() {
+        lock.lock();
+        try {
+            return ++retryCount;
         } finally {
             lock.unlock();
         }
