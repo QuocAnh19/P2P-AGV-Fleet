@@ -27,6 +27,11 @@ public enum Opcode {
     HEARTBEAT((byte) 0x02, "Node Heartbeat"),
 
     /**
+     * Real-time position update broadcast by AGV nodes upon cell transitions.
+     */
+    POSITION_UPDATE((byte) 0x03, "Position Update"),
+
+    /**
      * Distributed Mutual Exclusion Request (Ricart-Agrawala algorithm for intersection/path claim).
      */
     MUTEX_REQUEST((byte) 0x10, "Mutex Request"),

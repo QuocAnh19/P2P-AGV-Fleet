@@ -157,6 +157,19 @@ public class AgvMeshHandler extends SimpleChannelInboundHandler<AgvMessage> {
                 }
                 peerManager.dispatchMessage(msg, ctx.channel());
             }
+            case POSITION_UPDATE -> {
+                peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());
+                if (peerManager.getPositionTable() != null) {
+                    try {
+                        com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
+                                com.agv.fleet.common.protocol.payload.PositionUpdatePayload.fromBytes(msg.getPayload());
+                        peerManager.getPositionTable().update(senderNodeId, payload.x(), payload.y(), payload.targetX(), payload.targetY(), payload.state());
+                    } catch (Exception e) {
+                        log.error("Node {}: Error processing POSITION_UPDATE from Node {}", thisNodeId, senderNodeId, e);
+                    }
+                }
+                peerManager.dispatchMessage(msg, ctx.channel());
+            }
             default -> {
                 // Any application-level message indicates peer liveness
                 peerManager.onHeartbeatReceived(senderNodeId, ctx.channel());

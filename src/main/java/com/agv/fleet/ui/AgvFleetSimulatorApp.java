@@ -643,6 +643,16 @@ public class AgvFleetSimulatorApp extends Application {
                 TaskAwardPayload p = TaskAwardPayload.fromBytes(msg.getPayload());
                 yield "TASK_AWARD (" + p.taskId() + " -> AGV-" + p.winnerNodeId() + ")";
             }
+            case TASK_COMPLETE -> {
+                com.agv.fleet.common.protocol.payload.TaskCompletePayload p =
+                        com.agv.fleet.common.protocol.payload.TaskCompletePayload.fromBytes(msg.getPayload());
+                yield "TASK_COMPLETE (" + p.taskId() + " by AGV-" + p.contractorNodeId() + ")";
+            }
+            case POSITION_UPDATE -> {
+                com.agv.fleet.common.protocol.payload.PositionUpdatePayload p =
+                        com.agv.fleet.common.protocol.payload.PositionUpdatePayload.fromBytes(msg.getPayload());
+                yield String.format("POS_UPDATE (%.1f, %.1f -> %.1f, %.1f [%s])", p.x(), p.y(), p.targetX(), p.targetY(), p.state());
+            }
         };
 
         String logEntry = String.format("[%s] AGV-%d -> AGV-%d %s [Seq=%d, L=%d]",
@@ -711,16 +721,23 @@ public class AgvFleetSimulatorApp extends Application {
             try {
                 if (fleetPaused) return;
 
-                // Dynamic obstacles
-                Set<GridPoint> occupied = robots.stream()
-                        .filter(r -> !r.isCrashed())
-                        .map(AgvRobot::getCurrentGridPos)
-                        .collect(Collectors.toSet());
-
+                // Ground-truth collision detector: counts simultaneous occupancy of the same cell
+                Map<GridPoint, Integer> occupancyMap = new HashMap<>();
                 for (AgvRobot robot : robots) {
-                    Set<GridPoint> others = new HashSet<>(occupied);
-                    others.remove(robot.getCurrentGridPos());
-                    robot.updatePhysicsAndLogic(others);
+                    if (!robot.isCrashed()) {
+                        occupancyMap.merge(robot.getCurrentGridPos(), 1, Integer::sum);
+                    }
+                }
+                for (Map.Entry<GridPoint, Integer> entry : occupancyMap.entrySet()) {
+                    if (entry.getValue() > 1) {
+                        log.warn("Ground-truth collision detected at cell {}: {} robots overlapping",
+                                entry.getKey(), entry.getValue());
+                    }
+                }
+
+                // Autonomous robots update physics & logic using their own internal PeerPositionTable
+                for (AgvRobot robot : robots) {
+                    robot.updatePhysicsAndLogic(null);
                 }
 
                 // Check Continuous Conflict Loop
@@ -1142,7 +1159,7 @@ public class AgvFleetSimulatorApp extends Application {
             case ASSIGNED, IN_TRANSIT -> "#06B6D4";
             case AUCTIONING -> "#8B5CF6";
             case UNASSIGNED -> "#64748B";
-            case CANCELLED -> "#EF4444";
+            case CANCELLED, FAILED -> "#EF4444";
         };
         Label stBadge = new Label(task.getStatus().name());
         stBadge.setFont(Font.font("Segoe UI", FontWeight.BOLD, 9));

@@ -34,6 +34,7 @@ public class PeerManager {
     private volatile AgvTcpClient tcpClient;
     private volatile RicartAgrawalaEngine mutexEngine;
     private volatile CnpEngine cnpEngine;
+    private volatile com.agv.fleet.core.agent.PeerPositionTable positionTable;
     private volatile boolean frozen = false;
 
     public PeerManager(long thisNodeId) {
@@ -58,6 +59,14 @@ public class PeerManager {
 
     public CnpEngine getCnpEngine() {
         return cnpEngine;
+    }
+
+    public void setPositionTable(com.agv.fleet.core.agent.PeerPositionTable positionTable) {
+        this.positionTable = positionTable;
+    }
+
+    public com.agv.fleet.core.agent.PeerPositionTable getPositionTable() {
+        return positionTable;
     }
 
     /**
@@ -213,6 +222,10 @@ public class PeerManager {
                 } catch (Exception e) {
                     log.error("Node {}: Error notifying cnpEngine onPeerDropped for Node {}", thisNodeId, peerId, e);
                 }
+            }
+
+            if (positionTable != null) {
+                positionTable.remove(peerId);
             }
         }
     }

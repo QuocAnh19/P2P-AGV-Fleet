@@ -61,6 +61,7 @@ public class AgvNode {
 
     private final PeerManager peerManager;
     private final RicartAgrawalaEngine mutexEngine;
+    private final com.agv.fleet.core.agent.PeerPositionTable peerPositionTable;
 
     private final AgvBattery battery;
     private volatile Position2D position;
@@ -92,6 +93,8 @@ public class AgvNode {
         this.peerManager = new PeerManager(this.nodeId);
         this.mutexEngine = new RicartAgrawalaEngine(this.nodeId, this.peerManager, this.lamportClock, this::nextSequenceId);
         this.peerManager.setMutexEngine(this.mutexEngine);
+        this.peerPositionTable = new com.agv.fleet.core.agent.PeerPositionTable(this.nodeId, this.heartbeatTimeoutMs);
+        this.peerManager.setPositionTable(this.peerPositionTable);
 
         this.battery = new AgvBattery(builder.initialBattery);
         this.position = builder.initialPosition != null ? builder.initialPosition : new Position2D(0.0, 0.0);
@@ -391,6 +394,23 @@ public class AgvNode {
 
     public LamportClock getLamportClock() {
         return lamportClock;
+    }
+
+    public com.agv.fleet.core.agent.PeerPositionTable getPeerPositionTable() {
+        return peerPositionTable;
+    }
+
+    public void broadcastPositionUpdate(com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload) {
+        if (!running) return;
+        long timestamp = lamportClock.tick();
+        AgvMessage msg = AgvMessage.create(
+                Opcode.POSITION_UPDATE,
+                nextSequenceId(),
+                timestamp,
+                this.nodeId,
+                payload.toBytes()
+        );
+        peerManager.broadcast(msg);
     }
 
     /**

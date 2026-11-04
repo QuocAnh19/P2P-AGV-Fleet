@@ -105,8 +105,26 @@ public class AgvRobot {
                     pathQueue.add(path.get(i));
                 }
             }
+            broadcastPosition();
         } finally {
             stateLock.unlock();
+        }
+    }
+
+    /**
+     * Broadcasts real-time position to peer mesh network using POSITION_UPDATE (Opcode 0x03).
+     */
+    public void broadcastPosition() {
+        if (node != null) {
+            com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
+                    new com.agv.fleet.common.protocol.payload.PositionUpdatePayload(
+                            currentGridPos.x(),
+                            currentGridPos.y(),
+                            targetGridPos != null ? targetGridPos.x() : currentGridPos.x(),
+                            targetGridPos != null ? targetGridPos.y() : currentGridPos.y(),
+                            node.getAgentState()
+                    );
+            node.broadcastPositionUpdate(payload);
         }
     }
 
@@ -124,13 +142,20 @@ public class AgvRobot {
      *
      * @param dynamicObstacles positions of other AGVs to prevent physical collisions
      */
-    public void updatePhysicsAndLogic(Set<GridPoint> dynamicObstacles) {
+    public void updatePhysicsAndLogic(Set<GridPoint> simulatorObstacles) {
         if (crashed || paused) {
             return;
         }
 
         stateLock.lock();
         try {
+            // Dynamic obstacles are sourced directly from this AGV node's PeerPositionTable (pure P2P)
+            Set<GridPoint> dynamicObstacles;
+            if (node != null && node.getPeerPositionTable() != null) {
+                dynamicObstacles = node.getPeerPositionTable().getActiveObstaclePoints();
+            } else {
+                dynamicObstacles = (simulatorObstacles != null) ? simulatorObstacles : java.util.Collections.emptySet();
+            }
             // 1. Battery Safety & Automated Recharge Handling
             double batteryLevel = node.getBattery().getLevel();
             if (batteryLevel <= AgvBattery.LOW_BATTERY_THRESHOLD) {
@@ -213,6 +238,8 @@ public class AgvRobot {
                 currentGridPos = nextCell;
                 node.setPosition(currentGridPos.toPosition2D());
                 node.getBattery().consume(0.1); // 0.1% per cell traversed
+
+                broadcastPosition();
 
                 // If moving out of an intersection, release it!
                 if (heldIntersectionCellId != null && !heldIntersectionCellId.equals(map.getIntersectionCellId(currentGridPos))) {
