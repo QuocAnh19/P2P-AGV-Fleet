@@ -15,7 +15,19 @@ public class Task {
         UNASSIGNED,
         AUCTIONING,
         ASSIGNED,
-        COMPLETED
+        IN_TRANSIT,
+        COMPLETED,
+        CANCELLED
+    }
+
+    /**
+     * Priority levels for warehouse enterprise orders.
+     */
+    public enum Priority {
+        LOW,
+        NORMAL,
+        HIGH,
+        URGENT
     }
 
     private final String taskId;
@@ -23,17 +35,27 @@ public class Task {
     private final double pickupY;
     private final double deliveryX;
     private final double deliveryY;
+    private Priority priority = Priority.NORMAL;
+    private String cargoType = "Standard Pallet";
+    private final long creationTimestamp;
 
     private final ReentrantLock lock = new ReentrantLock();
     private Status status = Status.UNASSIGNED;
     private Long assignedNodeId = null;
 
     public Task(String taskId, double pickupX, double pickupY, double deliveryX, double deliveryY) {
+        this(taskId, pickupX, pickupY, deliveryX, deliveryY, Priority.NORMAL, "Standard Pallet");
+    }
+
+    public Task(String taskId, double pickupX, double pickupY, double deliveryX, double deliveryY, Priority priority, String cargoType) {
         this.taskId = Objects.requireNonNull(taskId, "taskId cannot be null");
         this.pickupX = pickupX;
         this.pickupY = pickupY;
         this.deliveryX = deliveryX;
         this.deliveryY = deliveryY;
+        this.priority = priority != null ? priority : Priority.NORMAL;
+        this.cargoType = cargoType != null ? cargoType : "Standard Pallet";
+        this.creationTimestamp = System.currentTimeMillis();
     }
 
     public String getTaskId() {
@@ -98,6 +120,26 @@ public class Task {
         } finally {
             lock.unlock();
         }
+    }
+
+    public Priority getPriority() {
+        return priority;
+    }
+
+    public void setPriority(Priority priority) {
+        this.priority = Objects.requireNonNull(priority, "priority cannot be null");
+    }
+
+    public String getCargoType() {
+        return cargoType;
+    }
+
+    public void setCargoType(String cargoType) {
+        this.cargoType = Objects.requireNonNull(cargoType, "cargoType cannot be null");
+    }
+
+    public long getCreationTimestamp() {
+        return creationTimestamp;
     }
 
     @Override

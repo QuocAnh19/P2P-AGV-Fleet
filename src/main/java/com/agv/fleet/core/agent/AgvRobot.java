@@ -48,6 +48,9 @@ public class AgvRobot {
     private volatile CompletableFuture<Void> mutexGrantFuture = null;
 
     private volatile boolean crashed = false;
+    private volatile boolean paused = false;
+    private volatile String modelName = "Pallet AGV-Pro";
+    private volatile long totalTasksCompleted = 0;
 
     public AgvRobot(AgvNode node, GridMap map, DynamicAStarPathfinder pathfinder, GridPoint initialPos) {
         this.node = Objects.requireNonNull(node, "node cannot be null");
@@ -113,7 +116,7 @@ public class AgvRobot {
      * @param dynamicObstacles positions of other AGVs to prevent physical collisions
      */
     public void updatePhysicsAndLogic(Set<GridPoint> dynamicObstacles) {
-        if (crashed) {
+        if (crashed || paused) {
             return;
         }
 
@@ -189,7 +192,7 @@ public class AgvRobot {
                 node.getBattery().consume(0.1); // 0.1% per cell traversed
 
                 // If moving out of an intersection, release it!
-                if (heldIntersectionCellId != null && !map.isIntersection(currentGridPos)) {
+                if (heldIntersectionCellId != null && !heldIntersectionCellId.equals(map.getIntersectionCellId(currentGridPos))) {
                     log.info("AGV {}: Cleared intersection {}. Releasing MUTEX.",
                             node.getNodeId(), heldIntersectionCellId);
                     node.releaseIntersection(heldIntersectionCellId);
@@ -232,6 +235,7 @@ public class AgvRobot {
                 // Arrived at Delivery!
                 carryingCargo = false;
                 currentTask.setStatus(Task.Status.COMPLETED);
+                totalTasksCompleted++;
                 log.info("AGV {}: Successfully completed Task {} at destination!", node.getNodeId(), currentTask.getTaskId());
                 currentTask = null;
                 node.setAgentState(AgentState.IDLE);
@@ -241,6 +245,82 @@ public class AgvRobot {
                 node.setAgentState(AgentState.IDLE);
             }
         }
+    }
+
+    /**
+     * Teleports the robot directly to a designated grid coordinate (used in simulation testing / conflict setup).
+     */
+    public void teleportTo(GridPoint newPos) {
+        stateLock.lock();
+        try {
+            if (heldIntersectionCellId != null) {
+                try {
+                    node.releaseIntersection(heldIntersectionCellId);
+                } catch (Exception ignored) {
+                }
+                heldIntersectionCellId = null;
+            }
+            waitingIntersectionCellId = null;
+            mutexGrantFuture = null;
+            pathQueue.clear();
+            currentTask = null;
+            carryingCargo = false;
+            currentGridPos = Objects.requireNonNull(newPos, "newPos cannot be null");
+            renderX = newPos.x();
+            renderY = newPos.y();
+            node.setPosition(newPos.toPosition2D());
+            if (!crashed) {
+                node.setAgentState(AgentState.IDLE);
+            }
+            log.info("AGV {}: Repositioned to {}", node.getNodeId(), newPos);
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    /**
+     * Recovers / reboots a crashed AGV node.
+     */
+    public void recover() {
+        stateLock.lock();
+        try {
+            if (!crashed) return;
+            crashed = false;
+            pathQueue.clear();
+            waitingIntersectionCellId = null;
+            heldIntersectionCellId = null;
+            mutexGrantFuture = null;
+            node.setAgentState(AgentState.IDLE);
+            try {
+                node.start();
+                log.info("AGV {}: Node successfully rebooted and rejoined mesh!", node.getNodeId());
+            } catch (Exception e) {
+                log.error("Failed to restart node {}", node.getNodeId(), e);
+            }
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    public void setPaused(boolean paused) {
+        this.paused = paused;
+        log.info("AGV {}: Paused state set to {}", node.getNodeId(), paused);
+    }
+
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public String getModelName() {
+        return modelName;
+    }
+
+    public void setModelName(String modelName) {
+        this.modelName = modelName;
+    }
+
+    public long getTotalTasksCompleted() {
+        return totalTasksCompleted;
     }
 
     /**

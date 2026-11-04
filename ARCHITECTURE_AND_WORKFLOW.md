@@ -269,20 +269,27 @@ stateDiagram-v2
     LOW_BATTERY_CHARGING --> IDLE : Đã sạc đầy tại trạm
 ```
 
-### 6.3. Kiến trúc Giao diện Dashboard JavaFX Canvas 2D (`AgvFleetSimulatorApp`)
+### 6.3. Kiến trúc Giao diện Trung tâm Điều hành Doanh nghiệp (Enterprise FMS Dashboard - `AgvFleetSimulatorApp`)
 - **Tốc độ hiển thị**: 30-60 FPS với `AnimationTimer` và phép nội suy vị trí mượt mà (Linear Interpolation).
-- **Mã màu trạng thái xe**:
-  - 🟦 `IDLE`: Sẵn sàng nhận việc
-  - 🟪 `BIDDING`: Đang nộp hồ sơ thầu
-  - 🟩 `MOVING`: Đang di chuyển lấy/giao hàng
-  - 🟧 `WAITING_MUTEX`: Đang dừng nhường đường ngã tư
-  - 🟩 `LOW_BATTERY_CHARGING`: Đang sạc tại trạm
-  - 🟥 `CRASHED`: Mô phỏng hỏng hóc / mất nguồn
-- **Tính năng Điều khiển & Tương tác**:
-  - *"Spawn New Task"*: Phát thầu đơn hàng ngẫu nhiên qua CNP.
-  - *"Simulate Head-On Conflict"*: Điều hướng 2 AGV đâm đối đầu qua 1 ngã tư để chứng minh Ricart-Agrawala giải quyết 0 deadlock.
-  - *"Kill Selected AGV"*: Giả lập sập nguồn 1 xe chứng minh tự phục hồi P2P.
-  - *"Add New AGV"*: Khởi tạo node AGV mới tham gia mesh tự động qua UDP discovery.
+- **Thanh chỉ số vận hành cấp cao (Top KPI Header)**:
+  - Giám sát thời gian thực: `Total Fleet`, `Active Orders`, `Delivered Orders`, `Active Mutex Locks`, `Max Lamport Clock`, `Fleet Health %`.
+  - Bộ điều khiển tốc độ mô phỏng trực tiếp: `0.5x`, `1.0x`, `2.0x`, `5.0x` và nút `Pause/Resume Fleet`.
+- **Bản đồ Digital Twin 2D tương tác trực quan**:
+  - Tích hợp nhãn phân vùng công nghiệp (Named Industrial Zones): Inbound Docks, Storage Aisles A-D, Packing Stations, Outbound Bays, Charging Docks.
+  - Tương tác chuột: Hover hiển thị tọa độ ô & vùng kho; Click chọn AGV; Click trực tiếp lên ô trống để điều phối xe đã chọn di chuyển (`Click-to-Dispatch`).
+  - Trực quan hóa khóa ngã tư thời gian thực: Hiển thị icon `🔒 [ID]` phát sáng trên ô ngã tư khi có AGV chiếm giữ mutex.
+  - Vẽ lộ trình di chuyển (breadcrumb navigation trails) và đích đến của từng đơn hàng.
+- **Hệ thống điều khiển nghiệp vụ (TabPane Sidebar)**:
+  - **Tab 1: 🚜 Fleet Operations**: Thẻ đo xa (Telemetry Card) từng xe, tiến trình pin %, nút điều phối thủ công: `Select`, `Send to Charge`, `Simulate Crash / Reboot`.
+  - **Tab 2: 📋 Orders & Tasks**: Danh sách đơn hàng chi tiết với nhãn mức độ ưu tiên (`LOW`, `NORMAL`, `HIGH`, `URGENT`), phân loại hàng hóa (`PALLET`, `BOX`, `HAZMAT`), điểm lấy/giao và xe đảm nhận.
+  - **Tab 3: 📡 P2P Wire Traffic**: Nhật ký truyền thông Gossip lọc theo nhóm gói tin (`ALL`, `MUTEX ONLY`, `CNP AUCTION ONLY`, `DISCOVERY & HEARTBEAT`).
+- **Hộp thoại Cấu hình Nghiệp vụ Thực tế (Enterprise Modal Dialogs)**:
+  - **Tạo đơn hàng tùy biến (`TaskConfigDialog`)**: Nhập Order ID, mức ưu tiên, loại hàng, chọn tọa độ hoặc vị trí kho mặc định (Inbound Docks -> Outbound Bays / Packing Stations), tùy chọn cơ chế điều phối: Đấu thầu phân tán CNP (`Contract Net Protocol`) hoặc Giao việc trực tiếp cho xe cụ thể.
+  - **Triển khai AGV mới tùy biến (`AgvConfigDialog`)**: Cấu hình Node ID, model AGV (Forklift, AMR Carrier, Heavy Lifter, Tugger), thanh trượt mức pin ban đầu (kèm cảnh báo ngưỡng an toàn pin), hệ số tải bảo trì, vị trí xuất phát (các trạm sạc hoặc dock kho).
+  - **Mô phỏng Xung đột Đa kịch bản & Liên tục (`ConflictConfigDialog`)**:
+    * Cho phép chạy lặp lại vô hạn lần (Repeatable) mà không bị giới hạn 1 lần duy nhất nhờ cơ chế tái định vị và đặt lại trạng thái (`teleportTo`).
+    * 3 Kịch bản xung đột công nghiệp: Giao cắt vuông góc (Perpendicular Cross-Traffic), Đối đầu rẽ hướng (Head-On Turn Convergence), Hội tụ 3 xe vào 1 giao lộ (3-Way Convergence).
+    * Chế độ **Continuous Looping Stress Mode**: Tự động lặp lại liên tục kịch bản sau mỗi chu kỳ giải quyết để kiểm thử độ bền (stress testing) của thuật toán Ricart-Agrawala theo thời gian thực, có nút `⏹ Stop Conflict` để dừng khẩn cấp.
 
 ---
 

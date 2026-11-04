@@ -147,6 +147,30 @@ public class GridMap {
         return list;
     }
 
+    /**
+     * Returns predefined industrial warehouse operational zones with ergonomic labels.
+     */
+    public Map<String, GridPoint> getNamedZones() {
+        Map<String, GridPoint> zones = new LinkedHashMap<>();
+        zones.put("Inbound Receiving Dock 1", new GridPoint(0, 3));
+        zones.put("Inbound Receiving Dock 2", new GridPoint(0, 8));
+        zones.put("Storage Aisle A (West-North)", new GridPoint(2, 4));
+        zones.put("Storage Aisle A (West-South)", new GridPoint(2, 12));
+        zones.put("Storage Aisle B (Mid-West)", new GridPoint(7, 8));
+        zones.put("Storage Aisle C (Mid-East)", new GridPoint(12, 8));
+        zones.put("Storage Aisle D (East-North)", new GridPoint(17, 4));
+        zones.put("Storage Aisle D (East-South)", new GridPoint(17, 12));
+        zones.put("Packing Station Alpha", new GridPoint(12, 2));
+        zones.put("Packing Station Beta", new GridPoint(12, 14));
+        zones.put("Outbound Shipping Bay 1", new GridPoint(23, 4));
+        zones.put("Outbound Shipping Bay 2", new GridPoint(23, 8));
+        zones.put("Charging Dock NW", new GridPoint(0, 1));
+        zones.put("Charging Dock SW", new GridPoint(0, 13));
+        zones.put("Charging Dock NE", new GridPoint(23, 1));
+        zones.put("Charging Dock SE", new GridPoint(23, 13));
+        return zones;
+    }
+
     private void rebuildSpecialCellLists() {
         intersections.clear();
         chargingStations.clear();
