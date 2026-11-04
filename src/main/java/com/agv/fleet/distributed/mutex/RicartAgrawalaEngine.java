@@ -294,6 +294,44 @@ public class RicartAgrawalaEngine {
     }
 
     /**
+     * Callback invoked when a new peer connects to the mesh network.
+     * For any intersection cell currently in WANTED state, the new peer is added
+     * to pendingReplies and sent a MUTEX_REQUEST preserving the original requestTimestamp.
+     *
+     * @param peerId ID of the newly connected peer
+     */
+    public void onPeerConnected(long peerId) {
+        if (peerId == thisNodeId) {
+            return;
+        }
+
+        for (CellMutex cellMutex : cellMutexes.values()) {
+            cellMutex.getLock().lock();
+            try {
+                if (cellMutex.getState() == MutexState.WANTED) {
+                    long originalReqTs = cellMutex.getRequestTimestamp();
+                    cellMutex.addPendingReply(peerId);
+
+                    log.info("Node {}: Late peer Node {} connected while cell {} is WANTED. Added to pendingReplies (total: {}). Sending MUTEX_REQUEST(ts={})",
+                            thisNodeId, peerId, cellMutex.getCellId(), cellMutex.getPendingRepliesCount(), originalReqTs);
+
+                    MutexRequestPayload payload = new MutexRequestPayload(cellMutex.getCellId(), originalReqTs, thisNodeId);
+                    AgvMessage requestMsg = AgvMessage.create(
+                            Opcode.MUTEX_REQUEST,
+                            sequenceSupplier.getAsLong(),
+                            originalReqTs,
+                            thisNodeId,
+                            payload.toBytes()
+                    );
+                    peerManager.send(peerId, requestMsg);
+                }
+            } finally {
+                cellMutex.getLock().unlock();
+            }
+        }
+    }
+
+    /**
      * Callback invoked when a peer node drops or crashes.
      *
      * @param droppedNodeId ID of disconnected peer

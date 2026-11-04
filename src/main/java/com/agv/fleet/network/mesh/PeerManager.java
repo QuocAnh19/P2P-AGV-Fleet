@@ -139,6 +139,14 @@ public class PeerManager {
                 log.error("Node {}: Error notifying onPeerConnected for Node {}", thisNodeId, peerId, e);
             }
         }
+
+        if (mutexEngine != null) {
+            try {
+                mutexEngine.onPeerConnected(peerId);
+            } catch (Exception e) {
+                log.error("Node {}: Error notifying mutexEngine onPeerConnected for Node {}", thisNodeId, peerId, e);
+            }
+        }
     }
 
     /**
