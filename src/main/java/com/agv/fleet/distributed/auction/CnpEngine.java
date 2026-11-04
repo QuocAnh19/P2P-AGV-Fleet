@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
@@ -223,8 +224,11 @@ public class CnpEngine {
                 bidPayload.toBytes()
         );
 
-        log.info("Node {}: Submitted BID for task {} to Node {} (dist={.2f}m, battery={.1f}%, cost={.2f})",
-                thisNodeId, payload.taskId(), payload.announcerNodeId(), dist, battery, cost);
+        log.info("Node {}: Submitted BID for task {} to Node {} (dist={}m, battery={}% , cost={})",
+                thisNodeId, payload.taskId(), payload.announcerNodeId(),
+                String.format(Locale.US, "%.2f", dist),
+                String.format(Locale.US, "%.1f", battery),
+                String.format(Locale.US, "%.2f", cost));
         peerManager.send(payload.announcerNodeId(), bidMsg);
     }
 
@@ -240,8 +244,9 @@ public class CnpEngine {
         AuctionSession session = activeAuctions.get(bid.taskId());
         if (session != null && !session.isClosed()) {
             session.addBid(bid);
-            log.debug("Node {}: Accepted bid from Node {} for task {} (cost={.2f})",
-                    thisNodeId, bid.bidderNodeId(), bid.taskId(), bid.cost());
+            log.debug("Node {}: Accepted bid from Node {} for task {} (cost={})",
+                    thisNodeId, bid.bidderNodeId(), bid.taskId(),
+                    String.format(Locale.US, "%.2f", bid.cost()));
         }
     }
 
@@ -317,8 +322,9 @@ public class CnpEngine {
                 awardPayload.toBytes()
         );
 
-        log.info("Node {}: AWARDED task {} to winning Node {} (minCost={.2f}). Broadcasting TASK_AWARD.",
-                thisNodeId, taskId, winnerNodeId, bestBid.cost());
+        log.info("Node {}: AWARDED task {} to winning Node {} (minCost={}). Broadcasting TASK_AWARD.",
+                thisNodeId, taskId, winnerNodeId,
+                String.format(Locale.US, "%.2f", bestBid.cost()));
         peerManager.broadcast(awardMsg);
     }
 
