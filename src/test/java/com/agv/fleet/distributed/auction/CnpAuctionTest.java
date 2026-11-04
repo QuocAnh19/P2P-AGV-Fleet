@@ -98,8 +98,8 @@ class CnpAuctionTest {
         // Await auction completion
         await().atMost(4, TimeUnit.SECONDS).untilAsserted(() -> {
             assertThat(session.isClosed()).isTrue();
-            // Node 2 must refuse bidding and enter LOW_BATTERY_CHARGING
-            assertThat(node2.getAgentState()).isEqualTo(AgentState.LOW_BATTERY_CHARGING);
+            // Node 2 must refuse bidding (remains IDLE, AgvRobot manages charging)
+            assertThat(node2.getAgentState()).isEqualTo(AgentState.IDLE);
             // Node 3 must win and transition to BUSY
             assertThat(node3.getAgentState()).isEqualTo(AgentState.BUSY);
             // Session must have awarded task to Node 3

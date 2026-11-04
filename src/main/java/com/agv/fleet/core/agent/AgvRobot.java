@@ -112,6 +112,15 @@ public class AgvRobot {
 
     /**
      * Core update loop called periodically by the simulation engine (e.g. 5-10 times per second).
+     * <p>
+     * <b>Battery Safety Policy:</b>
+     * If the battery level drops to or below {@link AgvBattery#LOW_BATTERY_THRESHOLD} (<= 15%),
+     * the robot checks whether it currently holds an active order ({@code currentTask != null}).
+     * If so, the robot will first complete the current task to avoid stranding cargo mid-aisle,
+     * and will navigate to the nearest charging station immediately upon task completion.
+     * If no task is active, the robot transitions to {@link AgentState#LOW_BATTERY_CHARGING}
+     * and immediately routes to the nearest charging station.
+     * </p>
      *
      * @param dynamicObstacles positions of other AGVs to prevent physical collisions
      */
@@ -125,12 +134,26 @@ public class AgvRobot {
             // 1. Battery Safety & Automated Recharge Handling
             double batteryLevel = node.getBattery().getLevel();
             if (batteryLevel <= AgvBattery.LOW_BATTERY_THRESHOLD) {
-                if (node.getAgentState() != AgentState.LOW_BATTERY_CHARGING && currentTask == null) {
-                    node.setAgentState(AgentState.LOW_BATTERY_CHARGING);
-                    GridPoint station = map.getNearestChargingStation(currentGridPos);
-                    if (station != null && !station.equals(targetGridPos)) {
-                        setDestination(station);
+                // Policy: complete currentTask first before heading to recharge
+                if (currentTask == null) {
+                    if (node.getAgentState() != AgentState.LOW_BATTERY_CHARGING) {
+                        node.setAgentState(AgentState.LOW_BATTERY_CHARGING);
+                        GridPoint station = map.getNearestChargingStation(currentGridPos);
+                        if (station != null && !station.equals(targetGridPos)) {
+                            setDestination(station);
+                        }
                     }
+                }
+            }
+
+            // Safety fallback: if state is LOW_BATTERY_CHARGING, not at a charging station,
+            // and pathQueue is empty, automatically set destination to the nearest charging station.
+            if (node.getAgentState() == AgentState.LOW_BATTERY_CHARGING
+                    && !map.isChargingStation(currentGridPos)
+                    && pathQueue.isEmpty()) {
+                GridPoint station = map.getNearestChargingStation(currentGridPos);
+                if (station != null && !station.equals(targetGridPos)) {
+                    setDestination(station);
                 }
             }
 
@@ -370,6 +393,10 @@ public class AgvRobot {
 
     public GridPoint getCurrentGridPos() {
         return currentGridPos;
+    }
+
+    public GridPoint getTargetGridPos() {
+        return targetGridPos;
     }
 
     public double getRenderX() {

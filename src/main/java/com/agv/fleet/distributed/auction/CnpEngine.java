@@ -163,9 +163,9 @@ public class CnpEngine {
         // 1. Check Battery Threshold (<= 15.0% cannot bid and enters charging)
         double battery = batterySupplier.get();
         if (battery <= AgvBattery.LOW_BATTERY_THRESHOLD) {
-            log.warn("Node {}: Battery critical ({}% <= {}%), skipping auction for task {} and switching to LOW_BATTERY_CHARGING",
-                    thisNodeId, battery, AgvBattery.LOW_BATTERY_THRESHOLD, payload.taskId());
-            stateConsumer.accept(AgentState.LOW_BATTERY_CHARGING);
+            log.warn("Node {}: Battery critical ({}% <= {}%), skipping auction for task {}",
+                    thisNodeId, String.format(java.util.Locale.US, "%.1f", battery), AgvBattery.LOW_BATTERY_THRESHOLD, payload.taskId());
+            // CnpEngine ONLY refuses bidding; AgvRobot is the sole authority managing charging lifecycle.
             return;
         }
 
