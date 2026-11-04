@@ -23,13 +23,13 @@ public class DynamicAStarPathfinder {
     /**
      * Finds the optimal shortest path from start to goal.
      *
-     * @param map              warehouse grid map
-     * @param start            starting grid coordinates
-     * @param goal             target destination grid coordinates
-     * @param dynamicObstacles optional set of temporarily blocked grid cells (e.g., parked AGVs)
+     * @param map     warehouse grid map
+     * @param start   starting grid coordinates
+     * @param goal    target destination grid coordinates
+     * @param blocked optional set of temporarily blocked grid cells (e.g., dynamic obstacles, conflicting cells)
      * @return ordered list of {@link GridPoint} from start to goal, or empty list if no path exists
      */
-    public List<GridPoint> findPath(GridMap map, GridPoint start, GridPoint goal, Set<GridPoint> dynamicObstacles) {
+    public List<GridPoint> findPath(GridMap map, GridPoint start, GridPoint goal, Set<GridPoint> blocked) {
         Objects.requireNonNull(map, "map cannot be null");
         Objects.requireNonNull(start, "start cannot be null");
         Objects.requireNonNull(goal, "goal cannot be null");
@@ -42,7 +42,7 @@ public class DynamicAStarPathfinder {
             return Collections.emptyList();
         }
 
-        Set<GridPoint> blocked = dynamicObstacles != null ? dynamicObstacles : Collections.emptySet();
+        Set<GridPoint> blockedSet = blocked != null ? blocked : Collections.emptySet();
 
         PriorityQueue<Node> openSet = new PriorityQueue<>();
         Map<GridPoint, Double> gScores = new HashMap<>();
@@ -72,8 +72,8 @@ public class DynamicAStarPathfinder {
                     continue; // Out of bounds or static obstacle
                 }
 
-                // Skip dynamic obstacles (unless neighbor is the goal or start)
-                if (blocked.contains(neighbor) && !neighbor.equals(goal)) {
+                // Skip blocked cells
+                if (blockedSet.contains(neighbor)) {
                     continue;
                 }
 

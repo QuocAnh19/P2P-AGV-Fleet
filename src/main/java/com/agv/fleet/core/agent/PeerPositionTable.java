@@ -52,6 +52,16 @@ public class PeerPositionTable {
         return entries.get(nodeId);
     }
 
+    public Long findPeerAt(GridPoint point) {
+        long now = System.currentTimeMillis();
+        for (Entry entry : entries.values()) {
+            if ((now - entry.lastUpdateTimestamp()) <= timeoutMs && entry.toGridPoint().equals(point)) {
+                return entry.nodeId();
+            }
+        }
+        return null;
+    }
+
     public Map<Long, Entry> getAll() {
         return entries;
     }

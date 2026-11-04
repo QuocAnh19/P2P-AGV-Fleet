@@ -52,6 +52,16 @@ public class AgvRobot {
     private volatile String modelName = "Pallet AGV-Pro";
     private volatile long totalTasksCompleted = 0;
 
+    // Corridor collision avoidance and siding yielding (Task 5)
+    private int consecutiveBlockedTicks = 0;
+    private GridPoint lastBlockedCell = null;
+    private int backoffTicks = 0;
+    private boolean yieldingToSiding = false;
+    private GridPoint originalTargetPos = null;
+    private GridPoint sidingEntryCell = null;
+    private Long yieldingForPeerId = null;
+    private final Random seededRandom;
+
     public AgvRobot(AgvNode node, GridMap map, DynamicAStarPathfinder pathfinder, GridPoint initialPos) {
         this.node = Objects.requireNonNull(node, "node cannot be null");
         this.map = Objects.requireNonNull(map, "map cannot be null");
@@ -60,6 +70,7 @@ public class AgvRobot {
         this.renderX = initialPos.x();
         this.renderY = initialPos.y();
         this.node.setPosition(initialPos.toPosition2D());
+        this.seededRandom = new Random(node != null ? node.getNodeId() * 31L + 17L : 42L);
 
         // Wire task assignment listener
         this.node.addAssignmentListener(this::onTaskAssigned);
@@ -149,6 +160,11 @@ public class AgvRobot {
 
         stateLock.lock();
         try {
+            if (backoffTicks > 0) {
+                backoffTicks--;
+                return;
+            }
+
             // Dynamic obstacles are sourced directly from this AGV node's PeerPositionTable (pure P2P)
             Set<GridPoint> dynamicObstacles;
             if (node != null && node.getPeerPositionTable() != null) {
@@ -156,6 +172,32 @@ public class AgvRobot {
             } else {
                 dynamicObstacles = (simulatorObstacles != null) ? simulatorObstacles : java.util.Collections.emptySet();
             }
+
+            // If currently yielding in a siding, check if corridor is clear to resume original destination
+            if (yieldingToSiding) {
+                if (pathQueue.isEmpty()) {
+                    boolean entryClear = dynamicObstacles == null || !dynamicObstacles.contains(sidingEntryCell);
+                    if (entryClear && originalTargetPos != null) {
+                        List<GridPoint> resumePath = pathfinder.findPath(map, currentGridPos, originalTargetPos, dynamicObstacles);
+                        if (!resumePath.isEmpty()) {
+                            log.info("AGV {}: Corridor clear! Exiting siding {} to resume route to {}",
+                                    node.getNodeId(), currentGridPos, originalTargetPos);
+                            yieldingToSiding = false;
+                            targetGridPos = originalTargetPos;
+                            originalTargetPos = null;
+                            sidingEntryCell = null;
+                            yieldingForPeerId = null;
+                            pathQueue.clear();
+                            for (int i = 1; i < resumePath.size(); i++) {
+                                pathQueue.add(resumePath.get(i));
+                            }
+                            broadcastPosition();
+                        }
+                    }
+                    return; // Wait inside siding until path is clear
+                }
+            }
+
             // 1. Battery Safety & Automated Recharge Handling
             double batteryLevel = node.getBattery().getLevel();
             if (batteryLevel <= AgvBattery.LOW_BATTERY_THRESHOLD) {
@@ -213,9 +255,100 @@ public class AgvRobot {
                 GridPoint nextCell = pathQueue.peek();
 
                 // Check dynamic collision: Don't step into cell currently occupied by another AGV
-                if (dynamicObstacles != null && dynamicObstacles.contains(nextCell)) {
-                    log.debug("AGV {}: Yielding step to dynamic obstacle at {}", node.getNodeId(), nextCell);
-                    return;
+                boolean isBlocked = dynamicObstacles != null && dynamicObstacles.contains(nextCell);
+
+                // Also check step contention: if peer is also 1 step away from nextCell, tie-break by node ID
+                if (!isBlocked && node != null && node.getPeerPositionTable() != null) {
+                    for (PeerPositionTable.Entry entry : node.getPeerPositionTable().getAll().values()) {
+                        if (entry.nodeId() == node.getNodeId()) continue;
+                        GridPoint peerPos = entry.toGridPoint();
+                        int dist = Math.abs(peerPos.x() - nextCell.x()) + Math.abs(peerPos.y() - nextCell.y());
+                        if (dist == 1 && node.getNodeId() < entry.nodeId()) {
+                            // Lower node ID yields step contention to higher node with seeded backoff to break symmetry
+                            isBlocked = true;
+                            backoffTicks = 1 + seededRandom.nextInt(2);
+                            break;
+                        }
+                    }
+                }
+
+                if (isBlocked) {
+                    if (nextCell.equals(lastBlockedCell)) {
+                        consecutiveBlockedTicks++;
+                    } else {
+                        lastBlockedCell = nextCell;
+                        consecutiveBlockedTicks = 1;
+                    }
+
+                    if (consecutiveBlockedTicks <= 3) {
+                        log.debug("AGV {}: Yielding step to dynamic obstacle at {} (tick {})",
+                                node.getNodeId(), nextCell, consecutiveBlockedTicks);
+                        return;
+                    }
+
+                    // Blocked for > 3 consecutive ticks!
+                    // Step 1: Try replan avoiding blocked cell
+                    Set<GridPoint> blockedSet = new HashSet<>(dynamicObstacles);
+                    blockedSet.add(nextCell);
+                    List<GridPoint> alternativePath = pathfinder.findPath(map, currentGridPos, targetGridPos, blockedSet);
+                    if (alternativePath != null && alternativePath.size() > 1) {
+                        log.info("AGV {}: Re-routed around blocked cell {}. New path length: {}",
+                                node.getNodeId(), nextCell, alternativePath.size());
+                        pathQueue.clear();
+                        for (int i = 1; i < alternativePath.size(); i++) {
+                            pathQueue.add(alternativePath.get(i));
+                        }
+                        consecutiveBlockedTicks = 0;
+                        lastBlockedCell = null;
+                        backoffTicks = seededRandom.nextInt(2);
+                        return;
+                    }
+
+                    // Step 2: Still no path! Need to reverse/yield to nearest empty cell (siding)
+                    // Rule: higher node ID yields.
+                    Long otherNodeId = (node != null && node.getPeerPositionTable() != null)
+                            ? node.getPeerPositionTable().findPeerAt(nextCell)
+                            : null;
+                    if (otherNodeId == null && node != null && node.getPeerPositionTable() != null) {
+                        for (PeerPositionTable.Entry entry : node.getPeerPositionTable().getAll().values()) {
+                            if (entry.nodeId() != node.getNodeId()) {
+                                otherNodeId = entry.nodeId();
+                                break;
+                            }
+                        }
+                    }
+
+                    long myNodeId = node != null ? node.getNodeId() : 0L;
+                    boolean isHigherNode = otherNodeId == null || myNodeId > otherNodeId;
+
+                    // Lower node ID waits for higher node ID to yield (fallback after 8 ticks to avoid permanent deadlock)
+                    if (!isHigherNode && consecutiveBlockedTicks <= 8) {
+                        backoffTicks = 1 + seededRandom.nextInt(2);
+                        log.debug("AGV {}: Lower nodeId than peer {}. Holding position with backoff {}",
+                                myNodeId, otherNodeId, backoffTicks);
+                        return;
+                    }
+
+                    // Find nearest empty cell (siding)
+                    GridPoint siding = findNearestSidingCell(currentGridPos, nextCell, dynamicObstacles);
+                    if (siding != null) {
+                        log.info("AGV {}: Yielding into siding {} for peer {}", myNodeId, siding, otherNodeId);
+                        yieldingToSiding = true;
+                        originalTargetPos = targetGridPos;
+                        sidingEntryCell = currentGridPos;
+                        yieldingForPeerId = otherNodeId;
+                        pathQueue.clear();
+                        pathQueue.add(siding);
+                        consecutiveBlockedTicks = 0;
+                        lastBlockedCell = null;
+                        return;
+                    } else {
+                        backoffTicks = 1 + seededRandom.nextInt(2);
+                        return;
+                    }
+                } else {
+                    consecutiveBlockedTicks = 0;
+                    lastBlockedCell = null;
                 }
 
                 // Check intersection entry: Must obtain Ricart-Agrawala Mutex before entering!
@@ -253,12 +386,44 @@ public class AgvRobot {
                     node.setAgentState(AgentState.MOVING);
                 }
             } else {
+                if (yieldingToSiding) {
+                    // In siding waiting for corridor to clear
+                    return;
+                }
                 // Path queue empty: Arrived at current destination target
                 handleArrivalAtDestination();
             }
         } finally {
             stateLock.unlock();
         }
+    }
+
+    private GridPoint findNearestSidingCell(GridPoint current, GridPoint blockedCell, Set<GridPoint> dynamicObstacles) {
+        int[][] directions = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+        GridPoint bestCandidate = null;
+
+        for (int[] dir : directions) {
+            GridPoint neighbor = new GridPoint(current.x() + dir[0], current.y() + dir[1]);
+            if (neighbor.equals(blockedCell) || neighbor.equals(current)) {
+                continue;
+            }
+            if (!map.isWalkable(neighbor)) {
+                continue;
+            }
+            if (dynamicObstacles != null && dynamicObstacles.contains(neighbor)) {
+                continue;
+            }
+
+            boolean isSidingBranch = (blockedCell.y() == current.y() && neighbor.y() != current.y())
+                    || (blockedCell.x() == current.x() && neighbor.x() != current.x());
+            if (isSidingBranch) {
+                return neighbor;
+            }
+            if (bestCandidate == null) {
+                bestCandidate = neighbor;
+            }
+        }
+        return bestCandidate;
     }
 
     /**
