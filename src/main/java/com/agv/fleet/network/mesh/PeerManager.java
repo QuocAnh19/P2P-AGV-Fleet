@@ -34,6 +34,7 @@ public class PeerManager {
     private volatile AgvTcpClient tcpClient;
     private volatile RicartAgrawalaEngine mutexEngine;
     private volatile CnpEngine cnpEngine;
+    private volatile boolean frozen = false;
 
     public PeerManager(long thisNodeId) {
         this.thisNodeId = thisNodeId;
@@ -217,12 +218,34 @@ public class PeerManager {
     }
 
     /**
+     * Freezes the network communication: stops reading/writing on all peer channels
+     * while keeping the physical TCP connections open.
+     */
+    public void freeze() {
+        this.frozen = true;
+        for (PeerSession session : activePeers.values()) {
+            Channel ch = session.getChannel();
+            if (ch != null && ch.isOpen()) {
+                ch.config().setAutoRead(false);
+            }
+        }
+    }
+
+    public boolean isFrozen() {
+        return frozen;
+    }
+
+    /**
      * Sends an {@link AgvMessage} to a specific target peer.
      *
      * @param targetNodeId peer ID
      * @param message      protocol message
      */
     public void send(long targetNodeId, AgvMessage message) {
+        if (frozen) {
+            log.trace("Node {}: Dropping outbound message to Node {} because network is frozen", thisNodeId, targetNodeId);
+            return;
+        }
         PeerSession session = activePeers.get(targetNodeId);
         if (session != null && session.isActive()) {
             session.send(message);
@@ -238,6 +261,9 @@ public class PeerManager {
      * @param message protocol message
      */
     public void broadcast(AgvMessage message) {
+        if (frozen) {
+            return;
+        }
         for (PeerSession session : activePeers.values()) {
             if (session.isActive()) {
                 session.send(message);
@@ -252,6 +278,9 @@ public class PeerManager {
      * @param channel origin channel
      */
     public void dispatchMessage(AgvMessage message, Channel channel) {
+        if (frozen) {
+            return;
+        }
         for (MessageListener listener : messageListeners) {
             try {
                 listener.onMessageReceived(message, channel);

@@ -196,6 +196,86 @@ public class AgvNode {
     }
 
     /**
+     * Gracefully stops the AGV Node (alias for stop).
+     */
+    public synchronized void shutdownGracefully() {
+        stop();
+    }
+
+    /**
+     * Abruptly crashes the node (simulating power failure):
+     * - Closes all TCP sockets immediately without releasing mutex or sending replies
+     * - Shuts down network and schedulers
+     */
+    public synchronized void crash() {
+        if (!running) {
+            return;
+        }
+        running = false;
+        log.warn("AGV Node {}: CRASHING abruptly (power loss simulation)...", nodeId);
+
+        // 1. Stop Heartbeat Controller without sending any farewell
+        if (heartbeatController != null) {
+            try {
+                heartbeatController.stop();
+            } catch (Exception ignored) {}
+        }
+
+        // 2. Stop UDP Discovery
+        if (udpDiscovery != null) {
+            try {
+                udpDiscovery.stop();
+            } catch (Exception ignored) {}
+        }
+
+        // 3. Abruptly close active TCP channels WITHOUT releasing any mutexes or sending any replies
+        if (peerManager != null) {
+            peerManager.closeAll();
+        }
+
+        // 4. Stop TCP server
+        if (tcpServer != null) {
+            try {
+                tcpServer.stop();
+            } catch (Exception ignored) {}
+        }
+
+        // 5. Terminate event loops abruptly
+        if (bossGroup != null) {
+            bossGroup.shutdownGracefully(0, 50, TimeUnit.MILLISECONDS);
+        }
+        if (workerGroup != null) {
+            workerGroup.shutdownGracefully(0, 50, TimeUnit.MILLISECONDS);
+        }
+
+        // 6. Stop scheduler
+        if (cnpScheduler != null) {
+            cnpScheduler.shutdownNow();
+        }
+
+        log.warn("AGV Node {} abruptly crashed.", nodeId);
+    }
+
+    /**
+     * Freezes the network subsystem to simulate an unresponsive node (hang/unreachable):
+     * - Stops sending heartbeats
+     * - Disables reading and writing on all peer channels
+     * - Keeps TCP sockets open so peers must detect failure via heartbeat timeout
+     */
+    public synchronized void freezeNetwork() {
+        log.warn("Node {}: Freezing network (keeping sockets open, suppressing heartbeats and I/O)", nodeId);
+        if (heartbeatController != null) {
+            heartbeatController.stop();
+        }
+        if (udpDiscovery != null) {
+            udpDiscovery.stop();
+        }
+        if (peerManager != null) {
+            peerManager.freeze();
+        }
+    }
+
+    /**
      * Gracefully stops the AGV Node:
      * 1. Stops UDP Multicast Discovery
      * 2. Stops Heartbeat Controller

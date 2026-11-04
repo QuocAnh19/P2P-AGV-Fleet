@@ -363,16 +363,11 @@ public class AgvRobot {
             crashed = true;
             node.setAgentState(AgentState.CRASHED);
 
-            if (heldIntersectionCellId != null) {
-                try {
-                    node.releaseIntersection(heldIntersectionCellId);
-                } catch (Exception ignored) {
-                }
-                heldIntersectionCellId = null;
-            }
+            // Power failure simulation: do NOT proactively release intersection or send replies
+            heldIntersectionCellId = null;
 
             pathQueue.clear();
-            node.stop();
+            node.crash();
             log.warn("AGV {}: Terminated and crashed!", node.getNodeId());
         } finally {
             stateLock.unlock();
