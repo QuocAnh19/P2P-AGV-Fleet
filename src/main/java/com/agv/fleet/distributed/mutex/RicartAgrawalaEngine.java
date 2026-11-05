@@ -54,6 +54,27 @@ public class RicartAgrawalaEngine {
     }
 
     /**
+     * Resets all cell mutex states to RELEASED and clears deferred / pending collections.
+     * Useful for multi-run test scenarios.
+     */
+    public void resetAll() {
+        for (CellMutex mutex : cellMutexes.values()) {
+            mutex.getLock().lock();
+            try {
+                mutex.setState(MutexState.RELEASED);
+                mutex.clearPendingReplies();
+                mutex.clearDeferred();
+                CompletableFuture<Void> gf = mutex.getGrantFuture();
+                if (gf != null && !gf.isDone()) {
+                    gf.cancel(false);
+                }
+            } finally {
+                mutex.getLock().unlock();
+            }
+        }
+    }
+
+    /**
      * Requests exclusive access to an intersection cell (critical section).
      *
      * @param cellId intersection cell ID

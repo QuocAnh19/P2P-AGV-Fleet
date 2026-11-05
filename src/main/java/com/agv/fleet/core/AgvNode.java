@@ -429,6 +429,12 @@ public class AgvNode {
         return peerPositionTable;
     }
 
+    public void resetMutexEngine() {
+        if (mutexEngine != null) {
+            mutexEngine.resetAll();
+        }
+    }
+
     public void broadcastPositionUpdate(com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload) {
         if (!running) return;
         long timestamp = lamportClock.tick();

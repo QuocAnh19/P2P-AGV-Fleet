@@ -42,6 +42,19 @@ public final class BenchmarkUtils {
     }
 
     /**
+     * Formats system environment metadata into a Markdown table.
+     */
+    public static String getSystemSpecsMarkdownTable() {
+        return "| Parameter | Value |\n" +
+               "| :--- | :--- |\n" +
+               "| **CPU** | " + getCpuInfo() + " |\n" +
+               "| **RAM** | " + getRamInfo() + " |\n" +
+               "| **JDK** | " + getJdkInfo() + " |\n" +
+               "| **OS** | " + getOsInfo() + " |\n" +
+               "| **Timestamp** | " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + " |";
+    }
+
+    /**
      * Prints system environment metadata banner to standard output.
      */
     public static void printSystemInfoBanner() {

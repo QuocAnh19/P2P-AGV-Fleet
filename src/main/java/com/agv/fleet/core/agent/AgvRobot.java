@@ -258,7 +258,8 @@ public class AgvRobot {
                 boolean isBlocked = dynamicObstacles != null && dynamicObstacles.contains(nextCell);
 
                 // Also check step contention: if peer is also 1 step away from nextCell, tie-break by node ID
-                if (!isBlocked && node != null && node.getPeerPositionTable() != null) {
+                // (Intersections are exclusively governed by Ricart-Agrawala distributed mutex)
+                if (!isBlocked && !map.isIntersection(nextCell) && node != null && node.getPeerPositionTable() != null) {
                     for (PeerPositionTable.Entry entry : node.getPeerPositionTable().getAll().values()) {
                         if (entry.nodeId() == node.getNodeId()) continue;
                         GridPoint peerPos = entry.toGridPoint();
@@ -280,9 +281,15 @@ public class AgvRobot {
                         consecutiveBlockedTicks = 1;
                     }
 
-                    if (consecutiveBlockedTicks <= 3) {
-                        log.debug("AGV {}: Yielding step to dynamic obstacle at {} (tick {})",
+                    int maxWaitTicks = map.isIntersection(nextCell) ? 45 : 12;
+                    if (consecutiveBlockedTicks <= maxWaitTicks) {
+                        log.debug("AGV {}: Queuing behind dynamic obstacle at {} (tick {})",
                                 node.getNodeId(), nextCell, consecutiveBlockedTicks);
+                        return;
+                    }
+
+                    // If blocked at intersection threshold, remain waiting in queue
+                    if (map.isIntersection(nextCell)) {
                         return;
                     }
 
@@ -485,6 +492,13 @@ public class AgvRobot {
             pathQueue.clear();
             currentTask = null;
             carryingCargo = false;
+            yieldingToSiding = false;
+            originalTargetPos = null;
+            sidingEntryCell = null;
+            yieldingForPeerId = null;
+            backoffTicks = 0;
+            consecutiveBlockedTicks = 0;
+            lastBlockedCell = null;
             currentGridPos = Objects.requireNonNull(newPos, "newPos cannot be null");
             renderX = newPos.x();
             renderY = newPos.y();
@@ -492,6 +506,7 @@ public class AgvRobot {
             if (!crashed) {
                 node.setAgentState(AgentState.IDLE);
             }
+            broadcastPosition();
             log.info("AGV {}: Repositioned to {}", node.getNodeId(), newPos);
         } finally {
             stateLock.unlock();
