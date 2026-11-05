@@ -117,6 +117,8 @@ public class TopicRouter {
             case TASK_AWARD -> "task/award";
             case TASK_COMPLETE -> "task/complete";
             case POSITION_UPDATE -> "nav/position";
+            case PING -> "sys/ping";
+            case PONG -> "sys/pong";
         };
     }
 }

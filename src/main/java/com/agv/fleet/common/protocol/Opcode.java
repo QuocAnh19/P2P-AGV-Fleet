@@ -32,6 +32,16 @@ public enum Opcode {
     POSITION_UPDATE((byte) 0x03, "Position Update"),
 
     /**
+     * Diagnostic Ping request carrying 8-byte send nanoTime payload.
+     */
+    PING((byte) 0x04, "Ping"),
+
+    /**
+     * Diagnostic Pong reply echoing 8-byte send nanoTime payload.
+     */
+    PONG((byte) 0x05, "Pong"),
+
+    /**
      * Distributed Mutual Exclusion Request (Ricart-Agrawala algorithm for intersection/path claim).
      */
     MUTEX_REQUEST((byte) 0x10, "Mutex Request"),

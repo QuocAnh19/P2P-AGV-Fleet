@@ -21,8 +21,10 @@ import com.agv.fleet.distributed.mutex.MutexState;
 import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -79,6 +81,7 @@ public class AgvNode {
 
     private volatile int actualTcpPort;
     private volatile boolean running = false;
+    private final Map<Long, CompletableFuture<Long>> pendingPings = new ConcurrentHashMap<>();
 
     public AgvNode(Builder builder) {
         this.nodeId = builder.nodeId;
@@ -117,6 +120,32 @@ public class AgvNode {
                 builder.maintenanceWeight
         );
         this.peerManager.setCnpEngine(this.cnpEngine);
+
+        // Subscribe to PING requests: reply with PONG echoing the 8-byte nanoTime payload
+        this.peerManager.getTopicRouter().subscribe("sys/ping", msg -> {
+            if (!running) return;
+            long replyTs = lamportClock.tick();
+            AgvMessage pong = AgvMessage.create(
+                    Opcode.PONG,
+                    nextSequenceId(),
+                    replyTs,
+                    this.nodeId,
+                    msg.getPayload()
+            );
+            peerManager.send(msg.getSenderNodeId(), pong);
+        });
+
+        // Subscribe to PONG replies: match sendNanoTime and complete RTT future
+        this.peerManager.getTopicRouter().subscribe("sys/pong", msg -> {
+            if (msg.getPayload() != null && msg.getPayload().length >= 8) {
+                long sendNano = com.agv.fleet.common.protocol.payload.PingPongPayload.fromBytes(msg.getPayload()).sendNanoTime();
+                CompletableFuture<Long> future = pendingPings.remove(sendNano);
+                if (future != null) {
+                    long rttNanos = System.nanoTime() - sendNano;
+                    future.complete(rttNanos);
+                }
+            }
+        });
     }
 
     /**
@@ -411,6 +440,36 @@ public class AgvNode {
                 payload.toBytes()
         );
         peerManager.broadcast(msg);
+    }
+
+    /**
+     * Sends a diagnostic PING (Opcode 0x04) to a peer AGV and returns a CompletableFuture
+     * completing with the measured Round-Trip Time (RTT) in nanoseconds.
+     *
+     * @param targetNodeId destination peer ID
+     * @return future completing with measured RTT in nanoseconds
+     */
+    public CompletableFuture<Long> ping(long targetNodeId) {
+        long sendNanoTime = System.nanoTime();
+        CompletableFuture<Long> future = new CompletableFuture<>();
+        pendingPings.put(sendNanoTime, future);
+
+        com.agv.fleet.common.protocol.payload.PingPongPayload payload =
+                new com.agv.fleet.common.protocol.payload.PingPongPayload(sendNanoTime);
+        AgvMessage pingMsg = AgvMessage.create(
+                Opcode.PING,
+                nextSequenceId(),
+                nextLamportTimestamp(),
+                this.nodeId,
+                payload.toBytes()
+        );
+        if (!peerManager.hasPeer(targetNodeId)) {
+            pendingPings.remove(sendNanoTime);
+            future.completeExceptionally(new java.io.IOException("Target node " + targetNodeId + " is not connected"));
+            return future;
+        }
+        peerManager.send(targetNodeId, pingMsg);
+        return future;
     }
 
     /**

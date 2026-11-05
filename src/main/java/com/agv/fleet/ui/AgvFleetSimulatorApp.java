@@ -653,6 +653,8 @@ public class AgvFleetSimulatorApp extends Application {
                         com.agv.fleet.common.protocol.payload.PositionUpdatePayload.fromBytes(msg.getPayload());
                 yield String.format("POS_UPDATE (%.1f, %.1f -> %.1f, %.1f [%s])", p.x(), p.y(), p.targetX(), p.targetY(), p.state());
             }
+            case PING -> "PING (" + (msg.getPayload() != null && msg.getPayload().length >= 8 ? com.agv.fleet.common.protocol.payload.PingPongPayload.fromBytes(msg.getPayload()).sendNanoTime() : "0") + "ns)";
+            case PONG -> "PONG (" + (msg.getPayload() != null && msg.getPayload().length >= 8 ? com.agv.fleet.common.protocol.payload.PingPongPayload.fromBytes(msg.getPayload()).sendNanoTime() : "0") + "ns)";
         };
 
         String logEntry = String.format("[%s] AGV-%d -> AGV-%d %s [Seq=%d, L=%d]",

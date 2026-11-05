@@ -126,5 +126,7 @@ class TopicRouterTest {
         assertThat(TopicRouter.topicFor(Opcode.TASK_AWARD)).isEqualTo("task/award");
         assertThat(TopicRouter.topicFor(Opcode.TASK_COMPLETE)).isEqualTo("task/complete");
         assertThat(TopicRouter.topicFor(Opcode.POSITION_UPDATE)).isEqualTo("nav/position");
+        assertThat(TopicRouter.topicFor(Opcode.PING)).isEqualTo("sys/ping");
+        assertThat(TopicRouter.topicFor(Opcode.PONG)).isEqualTo("sys/pong");
     }
 }
