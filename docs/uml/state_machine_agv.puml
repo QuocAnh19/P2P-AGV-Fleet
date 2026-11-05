@@ -1,0 +1,67 @@
+@startuml state_machine_agv
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam state {
+    BackgroundColor #F8FAFC
+    BorderColor #334155
+    StartColor #059669
+    EndColor #DC2626
+}
+
+[*] --> IDLE : Khởi động hệ thống & Kết nối Mesh
+
+state IDLE #EFF6FF {
+    description: Xe rảnh rỗi tại bãi hoặc trạm sạc,\nsẵn sàng tham gia nộp thầu hoặc tiếp nhận nhiệm vụ.
+}
+
+state BIDDING #FAF5FF {
+    description: Đã nộp hồ sơ dự thầu (TASK_BID),\nđang chờ Manager công bố TASK_AWARD.
+}
+
+state BUSY #FEF9C3 {
+    description: Đã trúng thầu (TASK_AWARD),\nđang phụ trách đơn hàng và chuẩn bị hành trình.
+}
+
+state MOVING #ECFDF5 {
+    description: Bánh xe đang quay, di chuyển từng ô theo lộ trình\ntính toán bởi Dynamic A* Pathfinder.
+}
+
+state WAITING_MUTEX #FFF7ED {
+    description: Dừng lại trước ngã tư (INTERSECTION),\ngửi MUTEX_REQUEST và chờ đủ MUTEX_REPLY.
+}
+
+state LOW_BATTERY_CHARGING #FEF2F2 {
+    description: Mức pin <= 15% (Ngưỡng an toàn),\nkiên quyết từ chối nộp thầu và đi về trạm sạc.
+}
+
+state CRASHED #7F1D1D {
+    description: Trạng thái sự cố phần cứng, mất nguồn\nhoặc đóng băng mạng (mô phỏng kiểm thử chịu lỗi).
+}
+
+IDLE --> BIDDING : Nhận TASK_ANNOUNCE & Pin > 15%\n[Gửi TASK_BID]
+IDLE --> MOVING : Được gán đích đến thủ công / Có pathQueue
+IDLE --> LOW_BATTERY_CHARGING : Pin <= 15% (Low battery threshold)\n[Hủy thầu & Tự tìm trạm sạc]
+
+BIDDING --> BUSY : Nhận TASK_AWARD (Trúng thầu)
+BIDDING --> IDLE : Thua thầu / Phiên đấu thầu hết hạn / Manager sập
+
+BUSY --> MOVING : Bắt đầu hành trình tới điểm lấy/giao hàng
+MOVING --> WAITING_MUTEX : Ô kế tiếp là INTERSECTION\n[Gửi MUTEX_REQUEST, chờ HELD]
+WAITING_MUTEX --> MOVING : Thu đủ MUTEX_REPLY (Trạng thái HELD)\n[Được phép tiến vào ngã tư]
+MOVING --> MOVING : Ra khỏi ngã tư [Gọi releaseIntersection(), gửi MUTEX_RELEASE]
+
+MOVING --> BUSY : Đã tới điểm lấy hàng (Pickup), chuẩn bị giao hàng
+MOVING --> IDLE : Đã tới điểm giao hàng (Delivery)\n[Gửi TASK_COMPLETE]
+
+LOW_BATTERY_CHARGING --> MOVING : Lộ trình dẫn về trạm sạc khả dụng
+LOW_BATTERY_CHARGING --> IDLE : Đã sạc pin đầy (> 15%)
+
+IDLE --> CRASHED : Mô phỏng sự cố (Simulate Hard Crash / Freeze)
+BIDDING --> CRASHED : Mô phỏng sự cố khi đang đấu thầu
+BUSY --> CRASHED : Mô phỏng sự cố khi đang giữ nhiệm vụ
+MOVING --> CRASHED : Mô phỏng sự cố khi đang di chuyển
+WAITING_MUTEX --> CRASHED : Mô phỏng sự cố khi đang chờ ngã tư
+
+CRASHED --> IDLE : Khởi động lại (Reboot / Reset kịch bản)
+
+@enduml

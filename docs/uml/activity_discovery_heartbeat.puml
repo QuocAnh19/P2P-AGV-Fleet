@@ -1,0 +1,84 @@
+@startuml activity_discovery_heartbeat
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+
+title Luồng Khám Phá Mạng Lưới (UDP Discovery) & Duy Trì Nhịp Tim (Heartbeat Failure Detector)
+
+|#EFF6FF|Tự Khám Phá Peer (UDP Multicast & TCP Mesh)|
+start
+:Khởi chạy AGV Node;
+:Khởi tạo Netty TCP Server (Lắng nghe cổng TCP);
+:Chọn card mạng Multicast vật lý (Bỏ qua virtual/VPN adapter);
+:Gia nhập nhóm UDP Multicast (239.255.0.1);
+
+fork
+    repeat
+        :Định kỳ phát gói tin UDP HELLO\n(NodeId, Host, TcpPort);
+        :Chờ broadcastIntervalMs (1000ms);
+    repeat while (Node đang chạy?)
+fork again
+    repeat
+        :Lắng nghe gói tin UDP HELLO từ mạng;
+        if (Gói tin từ chính node mình?) then (Có)
+            :Bỏ qua;
+        else (Không)
+            if (Peer đã có trong PeerManager?) then (Đã kết nối)
+                :Bỏ qua;
+            else (Chưa kết nối)
+                if (thisNodeId < peerNodeId?) then (Đúng: ID nhỏ hơn)
+                    :Khởi tạo TCP Client Outbound kết nối tới Peer;
+                    :Gửi frame PEER_DISCOVERY (0x01);
+                else (Sai: ID lớn hơn)
+                    :Đứng chờ TCP Inbound kết nối từ Peer;
+                    :Nhận frame PEER_DISCOVERY (0x01);
+                endif
+                :Đăng ký PeerSession vào PeerManager;
+                :Kích hoạt callback onPeerConnected(peerId);
+                :Thông báo RicartAgrawalaEngine đồng bộ ngã tư đang WANTED;
+            endif
+        endif
+    repeat while (Node đang chạy?)
+end fork
+
+|#FEF2F2|Giám Sát Nhịp Tim & Phát Hiện Node Sập (Heartbeat)|
+fork
+    repeat
+        :Định kỳ gửi gói tin HEARTBEAT (0x02) tới tất cả active peers;
+        :Chờ heartbeatIntervalMs (1000ms);
+    repeat while (Node đang chạy?)
+fork again
+    repeat
+        :Nhận gói tin từ Peer;
+        :Cập nhật lastSeenTimestamp = System.currentTimeMillis();
+    repeat while (Node đang chạy?)
+fork again
+    repeat
+        :Kiểm tra tất cả active peers trong PeerManager;
+        if ((now - lastSeenTimestamp) > heartbeatTimeoutMs?) then (Quá hạn Timeout!)
+            #pink:Nghi ngờ Peer đã sập / Mất kết nối!;
+            :Đóng Netty TCP Channel;
+            :Xóa Peer khỏi danh sách PeerManager;
+            :Kích hoạt sự kiện onPeerDropped(peerId);
+            
+            fork
+                :RicartAgrawalaEngine: Xóa peer khỏi pendingReplies & deferredQueue;
+                if (pendingReplies rỗng?) then (Có)
+                    #lightgreen:Tự động cấp quyền HELD ngã tư cho xe đang chờ!;
+                endif
+            fork again
+                :CnpEngine: Kiểm tra các task do peer này đảm nhận;
+                if (Task đang ASSIGNED và chưa COMPLETED?) then (Có)
+                    #orange:Hoàn nguyên task về AUCTIONING và phát thầu lại (Re-announce)!;
+                endif
+            fork again
+                :PeerPositionTable: Xóa tọa độ xe khỏi danh sách vật cản động;
+            end fork
+        else (Vẫn sống)
+            :Duy trì liên kết bình thường (Xanh lá);
+        endif
+        :Chờ chu kỳ kiểm tra tiếp theo (500ms);
+    repeat while (Node đang chạy?)
+end fork
+
+stop
+@enduml

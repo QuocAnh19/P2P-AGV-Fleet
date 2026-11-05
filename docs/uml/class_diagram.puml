@@ -1,0 +1,262 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam classFontStyle bold
+skinparam roundcorner 6
+
+package "com.agv.fleet.common.protocol" {
+    enum Opcode {
+        PEER_DISCOVERY
+        HEARTBEAT
+        POSITION_UPDATE
+        PING
+        PONG
+        MUTEX_REQUEST
+        MUTEX_REPLY
+        MUTEX_RELEASE
+        TASK_ANNOUNCE
+        TASK_BID
+        TASK_AWARD
+        TASK_COMPLETE
+        +getCode(): byte
+        +fromCode(byte): Opcode
+    }
+
+    class AgvHeader <<record>> {
+        +short magicNumber
+        +byte opcode
+        +byte version
+        +long sequenceId
+        +long lamportTimestamp
+        +long senderNodeId
+        +int payloadLength
+        +long crc32Checksum
+    }
+
+    class AgvMessage {
+        -AgvHeader header
+        -byte[] payload
+        +getHeader(): AgvHeader
+        +getPayload(): byte[]
+        +calculateCrc32(): long
+        +create(Opcode, long, long, long, byte[]): AgvMessage
+    }
+
+    AgvMessage *-- AgvHeader
+    AgvHeader --> Opcode
+}
+
+package "com.agv.fleet.core.agent" {
+    enum AgentState {
+        IDLE
+        BIDDING
+        BUSY
+        MOVING
+        WAITING_MUTEX
+        LOW_BATTERY_CHARGING
+        CRASHED
+    }
+
+    class AgvBattery {
+        -double level
+        +consume(double): void
+        +charge(double): void
+        +isLowBattery(): boolean
+        +getLevel(): double
+    }
+
+    class Task {
+        -String taskId
+        -double pickupX, pickupY
+        -double deliveryX, deliveryY
+        -Status status
+        -Long assignedNodeId
+        +assignTo(long): void
+        +complete(): void
+    }
+
+    class PeerPositionTable {
+        -ConcurrentMap<Long, Entry> entries
+        +update(long, double, double, double, double, AgentState): void
+        +remove(long): void
+        +findPeerAt(GridPoint): Long
+        +getActivePeerOccupiedPoints(): Set<GridPoint>
+    }
+
+    class AgvRobot {
+        -long robotId
+        -AgvNode node
+        -AgentState state
+        -AgvBattery battery
+        -GridMap map
+        -DynamicAStarPathfinder pathfinder
+        -Position2D currentPos
+        -Task currentTask
+        +updatePhysicsAndLogic(double): void
+        +setDestination(GridPoint): void
+        +assignTask(Task): void
+        +simulateCrash(): void
+    }
+
+    AgvRobot o-- AgentState
+    AgvRobot *-- AgvBattery
+    AgvRobot o-- Task
+}
+
+package "com.agv.fleet.core" {
+    class AgvNode {
+        -long nodeId
+        -PeerManager peerManager
+        -LamportClock lamportClock
+        -RicartAgrawalaEngine mutexEngine
+        -CnpEngine cnpEngine
+        -HeartbeatController heartbeatController
+        -TopicRouter topicRouter
+        -PeerPositionTable peerPositionTable
+        +start(): void
+        +stop(): void
+        +broadcast(AgvMessage): void
+        +sendToPeer(long, AgvMessage): void
+        +acquireIntersection(String): CompletableFuture<Void>
+        +releaseIntersection(String): void
+        +announceTask(Task): AuctionSession
+    }
+
+    AgvRobot --> AgvNode
+}
+
+package "com.agv.fleet.distributed.clock" {
+    class LamportClock {
+        -AtomicLong value
+        +tick(): long
+        +updateAndGet(long): long
+        +getValue(): long
+    }
+}
+
+package "com.agv.fleet.distributed.mutex" {
+    enum MutexState {
+        RELEASED
+        WANTED
+        HELD
+    }
+
+    class CellMutex {
+        -String cellId
+        -MutexState state
+        -long requestTimestamp
+        -Set<Long> pendingReplies
+        -Queue<Long> deferredQueue
+        +getState(): MutexState
+        +getDeferredNodes(): List<Long>
+    }
+
+    class RicartAgrawalaEngine {
+        -long thisNodeId
+        -LamportClock lamportClock
+        -Map<String, CellMutex> cellMutexes
+        +requestAccess(String, Collection<Long>): CompletableFuture<Void>
+        +releaseAccess(String): void
+        +handleRequest(long, String, long): void
+        +handleReply(long, String): void
+        +onPeerDropped(long): void
+        +onPeerConnected(long): void
+    }
+
+    RicartAgrawalaEngine o-- CellMutex
+    CellMutex o-- MutexState
+}
+
+package "com.agv.fleet.distributed.auction" {
+    class AuctionSession {
+        -String taskId
+        -long announcerNodeId
+        -List<TaskBidPayload> bids
+        -boolean closed
+        +addBid(TaskBidPayload): void
+        +resolveWinner(): Long
+    }
+
+    class CnpEngine {
+        -long thisNodeId
+        -Map<String, AuctionSession> activeAuctions
+        +announceTask(Task, Collection<Long>): AuctionSession
+        +handleAnnounce(TaskAnnouncePayload): void
+        +handleBid(TaskBidPayload): void
+        +handleAward(TaskAwardPayload): void
+        +onPeerDropped(long): void
+    }
+
+    CnpEngine o-- AuctionSession
+}
+
+package "com.agv.fleet.core.map" {
+    class GridPoint <<record>> {
+        +int x
+        +int y
+        +distanceTo(GridPoint): double
+    }
+
+    class GridMap {
+        -int width, height
+        -CellType[][] cells
+        +isWalkable(int, int): boolean
+        +isIntersection(int, int): boolean
+    }
+}
+
+package "com.agv.fleet.core.navigation" {
+    class DynamicAStarPathfinder {
+        -GridMap map
+        +findPath(GridPoint, GridPoint, Set<GridPoint>): List<GridPoint>
+    }
+
+    DynamicAStarPathfinder --> GridMap
+}
+
+package "com.agv.fleet.network.overlay" {
+    class TopicRouter {
+        -Map<String, List<Consumer<AgvMessage>>> subscriptions
+        +subscribe(String, Consumer<AgvMessage>): void
+        +publish(String, AgvMessage): void
+    }
+}
+
+package "com.agv.fleet.ui.metrics" {
+    class FleetMetricsCollector {
+        +updateFleetPositions(List<Position2D>): void
+        +recordTaskCompleted(): void
+        +recordMutexWaitTime(double): void
+        +getGroundTruthCollisions(): int
+        +exportMetricsCsv(): String
+    }
+}
+
+package "com.agv.fleet.ui.traffic" {
+    class WireMessageEntry <<record>> {
+        +String timeStr
+        +long lamportTimestamp
+        +Opcode opcode
+        +long senderId
+        +long receiverId
+        +String detail
+    }
+
+    class WireTrafficLog {
+        -LinkedList<WireMessageEntry> entries
+        +append(WireMessageEntry): void
+        +getFilteredEntries(Opcode, Long): List<WireMessageEntry>
+        +exportCsv(): String
+    }
+
+    WireTrafficLog o-- WireMessageEntry
+}
+
+AgvNode *-- LamportClock
+AgvNode *-- RicartAgrawalaEngine
+AgvNode *-- CnpEngine
+AgvNode *-- TopicRouter
+AgvNode *-- PeerPositionTable
+
+@enduml

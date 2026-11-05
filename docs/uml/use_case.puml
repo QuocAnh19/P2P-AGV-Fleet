@@ -1,0 +1,79 @@
+@startuml use_case
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowColor #334155
+skinparam ActorBorderColor #1E293B
+skinparam UsecaseBorderColor #2563EB
+skinparam UsecaseBackgroundColor #EFF6FF
+
+actor "Hệ điều hành / Operator" as Operator
+actor "Tác tử AGV (Autonomous Agent)" as AGV
+actor "Node Lân cận (P2P Peer)" as Peer
+actor "Trình giả lập Sự cố (Chaos Simulator)" as Chaos
+
+rectangle "Hệ Thống Điều Phối AGV P2P Phi Tập Trung" {
+
+    package "Tầng Mạng & Khám Phá (Layer 1 & 2)" {
+        usecase "UC1: Tự động khám phá mạng lưới\n(UDP Multicast Discovery)" as UC1
+        usecase "UC2: Thiết lập kết nối Full-Mesh\n(TCP P2P Handshake)" as UC2
+        usecase "UC3: Giám sát nhịp tim & Phát hiện node sập\n(Heartbeat Failure Detector)" as UC3
+        usecase "UC4: Đo độ trễ mạng chẩn đoán\n(PING / PONG RTT)" as UC4
+    }
+
+    package "Tầng Đồng Thuận & Tranh Chấp (Layer 3)" {
+        usecase "UC5: Đồng bộ sự kiện nhân quả\n(Lamport Logical Clock)" as UC5
+        usecase "UC6: Yêu cầu quyền vào ngã tư\n(Ricart-Agrawala Mutex Request)" as UC6
+        usecase "UC7: Trì hoãn / Chấp thuận vào ngã tư\n(Deferred Queue & Reply)" as UC7
+        usecase "UC8: Tự giải phóng ngã tư khi peer crash\n(Fault-Tolerant Mutex Release)" as UC8
+    }
+
+    package "Tầng Phân Bổ Nhiệm Vụ (Layer 4 - CNP)" {
+        usecase "UC9: Phát thầu nhiệm vụ vận chuyển\n(TASK_ANNOUNCE)" as UC9
+        usecase "UC10: Tính hàm chi phí & Nộp thầu\n(TASK_BID thích ứng theo Pin & Vị trí)" as UC10
+        usecase "UC11: Trao quyền thực thi cho xe thắng thầu\n(TASK_AWARD)" as UC11
+        usecase "UC12: Tự động tái phát thầu khi xe sập\n(Re-Announce on Contractor Crash)" as UC12
+        usecase "UC13: Xác nhận hoàn tất nhiệm vụ\n(TASK_COMPLETE)" as UC13
+    }
+
+    package "Tầng Điều Hướng & Giám Sát (Layer 5)" {
+        usecase "UC14: Tìm đường tối ưu tránh vật cản tĩnh & động\n(Dynamic A* Navigation)" as UC14
+        usecase "UC15: Tự ngắt thầu & Tìm trạm sạc khi pin <= 15%\n(Low Battery Safeguard)" as UC15
+        usecase "UC16: Giám sát vi mô, Wire Traffic & Đếm va chạm\n(Realtime 2D Canvas Dashboard)" as UC16
+        usecase "UC17: Kích hoạt kịch bản thử nghiệm tải cao\n(Scenarios S1/S2/S3 & Presentation Mode)" as UC17
+    }
+}
+
+Operator --> UC9
+Operator --> UC16
+Operator --> UC17
+
+Chaos --> UC3
+Chaos --> UC8
+Chaos --> UC12
+
+AGV --> UC1
+AGV --> UC2
+AGV --> UC3
+AGV --> UC4
+AGV --> UC5
+AGV --> UC6
+AGV --> UC7
+AGV --> UC10
+AGV --> UC13
+AGV --> UC14
+AGV --> UC15
+
+Peer --> UC2
+Peer --> UC3
+Peer --> UC6
+Peer --> UC7
+Peer --> UC10
+
+UC6 ..> UC5 : <<include>>
+UC7 ..> UC5 : <<include>>
+UC10 ..> UC15 : <<extend>>
+UC12 ..> UC3 : <<trigger>>
+UC8 ..> UC3 : <<trigger>>
+
+@enduml

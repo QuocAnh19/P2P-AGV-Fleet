@@ -1,0 +1,73 @@
+@startuml sequence_ricart_agrawala
+autonumber
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam sequenceMessageAlign center
+
+box "AGV Node 1 (ID: 1)" #EFF6FF
+    participant Robot1 as "AgvRobot 1"
+    participant Engine1 as "RicartAgrawalaEngine 1"
+    participant Clock1 as "LamportClock 1"
+end box
+
+box "P2P Mesh Network (TCP Channels)" #F8FAFC
+    participant Wire as "Decentralized P2P Mesh"
+end box
+
+box "AGV Node 2 (ID: 2)" #FEF2F2
+    participant Clock2 as "LamportClock 2"
+    participant Engine2 as "RicartAgrawalaEngine 2"
+    participant Robot2 as "AgvRobot 2"
+end box
+
+== 1. Đồng thời phát sinh nhu cầu vào cùng ngã tư CELL(5,5) ==
+
+Robot1 -> Engine1: acquireIntersection("CELL(5,5)")
+Engine1 -> Clock1: tick()
+Clock1 --> Engine1: reqTimestamp = 10
+Note over Engine1: State = WANTED\npendingReplies = {2}\nreqTs = 10
+
+Robot2 -> Engine2: acquireIntersection("CELL(5,5)")
+Engine2 -> Clock2: tick()
+Clock2 --> Engine2: reqTimestamp = 12
+Note over Engine2: State = WANTED\npendingReplies = {1}\nreqTs = 12
+
+== 2. Trao đổi thông điệp MUTEX_REQUEST trên đường truyền ==
+
+Engine1 -> Wire: MUTEX_REQUEST("CELL(5,5)", reqTs=10, sender=1)
+Engine2 -> Wire: MUTEX_REQUEST("CELL(5,5)", reqTs=12, sender=2)
+
+Wire -> Engine2: Nhận MUTEX_REQUEST từ Node 1 (reqTs=10, ID=1)
+Engine2 -> Clock2: updateAndGet(10)
+Note over Engine2: So sánh ưu tiên:\nMy reqTs (12) > Peer reqTs (10)\n=> Node 1 có độ ưu tiên cao hơn!\nNode 2 gửi ngay MUTEX_REPLY chấp thuận.
+
+Engine2 -> Wire: MUTEX_REPLY("CELL(5,5)", sender=2 -> dest=1)
+
+Wire -> Engine1: Nhận MUTEX_REQUEST từ Node 2 (reqTs=12, ID=2)
+Engine1 -> Clock1: updateAndGet(12)
+Note over Engine1: So sánh ưu tiên:\nMy reqTs (10) < Peer reqTs (12)\n=> Node 1 thắng!\nNode 1 hoãn trả lời (thêm 2 vào deferredQueue).
+
+Wire -> Engine1: Nhận MUTEX_REPLY từ Node 2
+Note over Engine1: Xóa Node 2 khỏi pendingReplies.\npendingReplies.isEmpty() == true!\n=> State chuyển sang HELD.
+Engine1 --> Robot1: Grant Critical Section Future (Granted!)
+
+== 3. Node 1 độc quyền đi qua ngã tư ==
+
+Robot1 -> Robot1: Chuyển trạng thái sang MOVING\nBăng qua tâm ngã tư (5,5)
+Note over Robot2: Vẫn dừng chờ ở mép ngã tư (WAITING_MUTEX)\nChưa nhận đủ reply từ Node 1
+
+== 4. Node 1 thoát khỏi ngã tư và giải phóng Mutex ==
+
+Robot1 -> Engine1: releaseIntersection("CELL(5,5)")
+Note over Engine1: State chuyển sang RELEASED\nTrích xuất deferredQueue = [Node 2]
+
+Engine1 -> Wire: MUTEX_REPLY("CELL(5,5)", sender=1 -> dest=2)
+Engine1 -> Wire: MUTEX_RELEASE("CELL(5,5)", sender=1) [Broadcast]
+
+Wire -> Engine2: Nhận MUTEX_REPLY từ Node 1
+Note over Engine2: Xóa Node 1 khỏi pendingReplies.\npendingReplies.isEmpty() == true!\n=> State chuyển sang HELD.
+Engine2 --> Robot2: Grant Critical Section Future (Granted!)
+
+Robot2 -> Robot2: Chuyển trạng thái sang MOVING\nAn toàn tiến vào ngã tư (5,5)
+
+@enduml

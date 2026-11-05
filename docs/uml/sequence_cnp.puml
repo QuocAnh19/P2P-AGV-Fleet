@@ -1,0 +1,70 @@
+@startuml sequence_cnp
+autonumber
+skinparam shadowing false
+skinparam defaultFontName "Segoe UI"
+skinparam sequenceMessageAlign center
+
+box "Node Phát Thầu (Manager: Node 100)" #EFF6FF
+    participant Announcer as "AgvNode 100\n(Manager)"
+    participant CnpMgr as "CnpEngine 100"
+    participant Session as "AuctionSession\n(TASK-01)"
+end box
+
+box "P2P Mesh Network" #F8FAFC
+    participant Wire as "Decentralized P2P Mesh"
+end box
+
+box "Node Dự Thầu (Bidder 1: Pin 90%)" #F0FDF4
+    participant Bidder1 as "AgvNode 1\n(Bat: 90%)"
+end box
+
+box "Node Dự Thầu (Bidder 2: Pin 10%)" #FEF2F2
+    participant Bidder2 as "AgvNode 2\n(Bat: 10%)"
+end box
+
+== Giai đoạn 1: Phát thầu công khai (Task Announcement) ==
+
+Announcer -> CnpMgr: announceTask(Task: TASK-01)
+CnpMgr -> Session**: Tạo phiên đấu thầu (Timeout = 500ms)
+CnpMgr -> Wire: TASK_ANNOUNCE(taskId="TASK-01", pickup=(2,2), delivery=(8,8))
+
+Wire -> Bidder1: Nhận TASK_ANNOUNCE
+Wire -> Bidder2: Nhận TASK_ANNOUNCE
+
+Note over Bidder2: Pin 10% <= 15% (Ngưỡng an toàn!)\nTừ chối nộp thầu!\nChuyển sang LOW_BATTERY_CHARGING
+
+Note over Bidder1: Pin 90% > 15%, Trạng thái IDLE\nTính Cost = 0.5*dist + 0.3*(100-90) + 0.2*w\nCost = 5.20\nChuyển sang BIDDING
+
+Bidder1 -> Wire: TASK_BID(taskId="TASK-01", cost=5.20, battery=90%, bidder=1)
+
+Wire -> CnpMgr: Nhận TASK_BID từ Node 1
+CnpMgr -> Session: addBid(Node 1, cost=5.20)
+
+== Giai đoạn 2: Hết hạn đấu thầu & Trao thầu (Awarding) ==
+
+Session -> Session: Hết hạn Timeout (500ms)\nresolveWinner() => Node 1 thắng (Min Cost)!
+CnpMgr -> Wire: TASK_AWARD(taskId="TASK-01", winner=1) [Broadcast]
+
+Wire -> Bidder1: Nhận TASK_AWARD(winner=1)
+Note over Bidder1: Tôi đã thắng thầu!\nChuyển trạng thái sang BUSY\nBắt đầu điều hướng lấy hàng
+
+== Nhánh A: Hoàn thành nhiệm vụ bình thường (Happy Path) ==
+
+Bidder1 -> Bidder1: Di chuyển lấy hàng và giao hàng an toàn (A* & Mutex)
+Bidder1 -> Wire: TASK_COMPLETE(taskId="TASK-01", contractor=1)
+Wire -> CnpMgr: Nhận TASK_COMPLETE
+CnpMgr -> Announcer: Đánh dấu TASK-01 là COMPLETED thành công!
+
+== Nhánh B: Sự cố Thầu phụ bị sập giữa chừng (Contractor Crash & Fault Tolerance) ==
+
+alt Nếu Node 1 sập đột ngột (Hard Crash / Mất kết nối khi đang BUSY)
+    Note over Bidder1: Node 1 gặp sự cố sập nguồn / Crash!
+    Announcer -> Wire: HEARTBEAT (3 chu kỳ không nhận được PONG/ACK)
+    Note over Announcer: Heartbeat Timeout (3000ms)\nKích hoạt onPeerDropped(nodeId=1)
+    Announcer -> CnpMgr: onPeerDropped(1)
+    Note over CnpMgr: Kiểm tra: Node 1 đang giữ TASK-01 (Status: ASSIGNED)\nNhưng chưa nhận được TASK_COMPLETE!\n=> Tự động phục hồi và tái phát thầu (Re-announce)!
+    CnpMgr -> Wire: TASK_ANNOUNCE(taskId="TASK-01", pickup=(2,2), delivery=(8,8)) [Re-announced!]
+    Note over Wire: Toàn bộ quy trình đấu thầu được khởi động lại\nĐơn hàng không bao giờ bị thất lạc!
+end
+
+@enduml
