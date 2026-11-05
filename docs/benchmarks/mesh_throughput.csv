@@ -1,9 +1,9 @@
 # System Configuration
 # CPU: Intel64 Family 6 Model 141 Stepping 1, GenuineIntel (12 cores)
-# RAM: 412 MB allocated (Max JVM: 4022 MB)
+# RAM: 288 MB allocated (Max JVM: 4022 MB)
 # JDK: 23 (Oracle Corporation)
 # OS: Windows 11 10.0 (amd64)
-# Date: 2026-11-05T22:47:02.182479
+# Date: 2026-11-05T23:11:18.8174259
 Node_Count,Duration_sec,Broadcasts_Sent,Expected_Deliveries,Received_Deliveries,Packets_Lost,Loss_Rate_pct,CRC_Errors,Delivered_msgs_per_sec,Throughput_MB_per_sec
-5,2 s,145,057,580,228,580,271,0,0.000%,0,277,621.7,18.27
-10,2 s,164,893,1,484,037,1,206,404,277,633,18.708%,0,402,351.7,26.48
+5,2 s,144,897,579,588,579,631,0,0.000%,0,285,338.5,18.78
+10,2 s,150,874,1,357,866,1,045,691,312,175,22.990%,0,467,815.8,30.78

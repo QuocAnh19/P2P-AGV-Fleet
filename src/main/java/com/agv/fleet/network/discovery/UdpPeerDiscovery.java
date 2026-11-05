@@ -229,6 +229,7 @@ public class UdpPeerDiscovery {
 
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             NetworkInterface loopback = null;
+            NetworkInterface candidateVirtual = null;
             for (NetworkInterface iface : Collections.list(interfaces)) {
                 if (iface.isUp() && iface.supportsMulticast()) {
                     boolean hasIpv4 = false;
@@ -240,17 +241,39 @@ public class UdpPeerDiscovery {
                     }
                     if (hasIpv4) {
                         if (!iface.isLoopback()) {
-                            return iface;
+                            if (!isVirtualOrVpn(iface)) {
+                                return iface;
+                            } else if (candidateVirtual == null) {
+                                candidateVirtual = iface;
+                            }
                         } else if (loopback == null) {
                             loopback = iface;
                         }
                     }
                 }
             }
+            if (candidateVirtual != null && loopback == null) {
+                return candidateVirtual;
+            }
             return (loopback != null) ? loopback : NetworkInterface.getByInetAddress(InetAddress.getLoopbackAddress());
         } catch (Exception e) {
             throw new IllegalStateException("Unable to resolve suitable multicast network interface", e);
         }
+    }
+
+    private static boolean isVirtualOrVpn(NetworkInterface iface) {
+        try {
+            if (iface.isVirtual() || iface.isPointToPoint()) {
+                return true;
+            }
+        } catch (Exception ignored) {
+        }
+        String name = (iface.getName() + " " + iface.getDisplayName()).toLowerCase();
+        return name.contains("vpn") || name.contains("virtual") || name.contains("radmin")
+                || name.contains("tap") || name.contains("vbox") || name.contains("vmnet")
+                || name.contains("wsl") || name.contains("hyper-v") || name.contains("pseudo")
+                || name.contains("wireguard") || name.contains("zerotier") || name.contains("tailscale")
+                || name.contains("tunnel") || name.contains("docker");
     }
 
     public boolean isRunning() {

@@ -21,6 +21,8 @@ import com.agv.fleet.distributed.mutex.MutexState;
 import com.agv.fleet.distributed.mutex.RicartAgrawalaEngine;
 
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -422,6 +424,10 @@ public class AgvNode {
 
     public MutexState getMutexState(String cellId) {
         return mutexEngine.getState(cellId);
+    }
+
+    public List<Long> getDeferredNodes(String cellId) {
+        return mutexEngine != null ? mutexEngine.getDeferredNodes(cellId) : Collections.emptyList();
     }
 
     public LamportClock getLamportClock() {

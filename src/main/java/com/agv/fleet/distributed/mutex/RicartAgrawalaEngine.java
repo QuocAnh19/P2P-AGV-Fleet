@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -444,6 +445,11 @@ public class RicartAgrawalaEngine {
 
     public boolean isHolding(String cellId) {
         return getState(cellId) == MutexState.HELD;
+    }
+
+    public List<Long> getDeferredNodes(String cellId) {
+        CellMutex mutex = cellMutexes.get(cellId);
+        return (mutex != null) ? mutex.getDeferredNodes() : Collections.emptyList();
     }
 
     public LamportClock getLamportClock() {

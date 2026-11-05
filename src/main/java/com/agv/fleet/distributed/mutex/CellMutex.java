@@ -152,6 +152,15 @@ public class CellMutex {
         }
     }
 
+    public List<Long> getDeferredNodes() {
+        lock.lock();
+        try {
+            return new ArrayList<>(deferredQueue);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public CompletableFuture<Void> getGrantFuture() {
         lock.lock();
         try {
