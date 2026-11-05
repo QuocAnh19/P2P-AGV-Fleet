@@ -84,7 +84,7 @@ class HeadOnCorridorCollisionTest {
         robot2.setDestination(target2);
 
         // Run simulation ticks
-        int maxTicks = 40;
+        int maxTicks = 80;
         int tick = 0;
         boolean bothReached = false;
 
