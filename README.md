@@ -108,33 +108,51 @@ Phân bổ nhiệm vụ vận chuyển hàng hóa tự động phi tập trung (
    - $W_{\text{maintenance}}$: Trọng số bảo trì kỹ thuật của xe.
 2. **Quy tắc An toàn Pin (Battery Safety Rule)**:
    - Nếu $B \le 15.0\%$ (Ngưỡng `LOW_BATTERY_THRESHOLD`), AGV kiên quyết từ chối nộp thầu và tự động chuyển trạng thái sang `LOW_BATTERY_CHARGING` để bảo vệ pin.
-3. **Quy tắc Trạng thái Tác tử (`AgentState`)**:
-   - Chỉ AGV ở trạng thái rảnh rỗi (`IDLE`) mới tham gia nộp thầu (`TASK_BID`).
-   - Sau khi nộp thầu, AGV chuyển sang `BIDDING`.
-   - Nếu trúng thầu (`TASK_AWARD`), AGV chuyển sang `BUSY` để thực thi nhiệm vụ.
-   - Nếu trượt thầu, AGV tự động hoàn nguyên về `IDLE`.
+3. **Mô hình Trạng thái Tác tử Đầy đủ (`AgentState`)**:
+   - `IDLE`: AGV rảnh rỗi, sẵn sàng tham gia nộp thầu hoặc tiếp nhận đơn hàng mới.
+   - `BIDDING`: AGV đã nộp thầu (`TASK_BID`) cho một phiên đấu giá và đang chờ kết quả trao thầu.
+   - `BUSY`: AGV trúng thầu (`TASK_AWARD`), đã tiếp nhận nhiệm vụ và đang phục vụ tác vụ này.
+   - `MOVING`: AGV đang trực tiếp di chuyển bánh xe trên bản đồ theo lộ trình tính bởi Dynamic A*.
+   - `WAITING_MUTEX`: AGV đang dừng tại mép ngã tư, gửi `MUTEX_REQUEST` và chờ thu thập đủ `MUTEX_REPLY`.
+   - `LOW_BATTERY_CHARGING`: AGV có pin $\le 15\%$, từ chối mọi hoạt động thầu và tự điều hướng về trạm sạc gần nhất.
+   - `CRASHED`: AGV gặp sự cố phần cứng, mất nguồn hoặc bị ngắt tiến trình (mô phỏng fault-tolerance).
 4. **Khả năng Chịu lỗi (Fault-Tolerance)**:
    - **Thầu phụ (Contractor) sập giữa chừng**: Node quản lý phát hiện mất kết nối qua Heartbeat, tự động hủy phân bổ và tái phát thầu (`re-announce`) để không bị thất lạc đơn hàng.
    - **Chủ thầu (Manager) sập**: Các xe đang trong trạng thái `BIDDING` tự động hủy gói thầu và hoàn nguyên về `IDLE`.
 
-### 3.4. Tầng Điều hướng Dynamic A* và Mô phỏng Trực quan JavaFX Canvas 2D
+### 3.4. Tầng Pub/Sub Overlay (`TopicRouter`) & Bảng Vị trí Động (`PeerPositionTable`)
+1. **Overlay Topic Router (`TopicRouter`)**:
+   - Kiến trúc Publish/Subscribe nhẹ tích hợp trực tiếp trên P2P Mesh, cho phép định tuyến thông điệp theo topic:
+     - Khớp chính xác: `sys/discovery`, `sys/heartbeat`, `nav/position`, `diag/ping`, `diag/pong`.
+     - Khớp mẫu tiền tố phân cấp: `mutex/*`, `task/*`, `fleet/#`.
+   - **Cách ly lỗi (Fault Isolation)**: Lỗi xảy ra bên trong callback của một subscriber bất kỳ được bao đóng an toàn trong khối try-catch, không gây gián đoạn hay ảnh hưởng tới các subscriber khác trong hệ thống.
+2. **Bảng Giám sát Không gian Phi tập trung (`PeerPositionTable`)**:
+   - Quản lý vị trí, vận tốc và trạng thái thời gian thực của các xe lân cận trong đội xe.
+   - Mỗi bản ghi tự động hết hạn nếu không nhận được tọa độ mới sau khoảng thời gian `heartbeatTimeoutMs`.
+   - Tích hợp trực tiếp với `DynamicAStarPathfinder` để bổ sung tọa độ các xe khác làm vật cản động thời gian thực, ngăn chặn đối đầu trực diện ngay trên hành lang hẹp trước khi tiếp cận ngã tư.
+
+### 3.5. Tầng Điều hướng Dynamic A* và Mô phỏng Trực quan JavaFX Canvas 2D
 1. **Bản đồ Lưới Kho hàng (`GridMap`)**:
    - Lưới ma trận $24 \times 16$ ô: Kệ hàng (`OBSTACLE`), Ngã tư (`INTERSECTION`), Trạm sạc (`CHARGING_STATION`), Làn đường chạy (`EMPTY`).
    - Tọa độ nguyên rời rạc `GridPoint(x, y)` hỗ trợ khoảng cách Euclid và Manhattan.
 2. **Thuật toán Dynamic A* Pathfinding (`DynamicAStarPathfinder`)**:
    - Tìm kiếm đường đi tối ưu $f(n) = g(n) + h(n)$ với Manhattan heuristic.
-   - Tránh vật cản tĩnh (kệ hàng) và vật cản động (vị trí các xe AGV khác đang dừng).
+   - Tránh vật cản tĩnh (kệ hàng) và vật cản động (vị trí các xe AGV khác đang dừng hoặc di chuyển chậm thông qua `PeerPositionTable`).
 3. **Bộ điều khiển Vòng đời AGV (`AgvRobot`)**:
    - Tích hợp mạng Netty `AgvNode`, Ricart-Agrawala Mutex, CNP Engine, Pin `AgvBattery` và bộ dẫn đường A*.
    - Trước khi đi vào ô ngã tư: Yêu cầu `acquireIntersection(cellId)`, chuyển trạng thái `WAITING_MUTEX`, dừng xe chờ cấp quyền. Khi được cấp quyền mới tiến vào.
    - Khi đã ra khỏi ô ngã tư: Lập tức gọi `releaseIntersection(cellId)` nhường quyền cho các xe khác.
    - Tiêu hao pin theo bước di chuyển. Nếu pin $\le 15\%$, tự động ngắt nhận thầu và tìm đường về trạm sạc gần nhất.
-4. **Giao diện Dashboard JavaFX 2D (`AgvFleetSimulatorApp`)**:
-   - Canvas 2D chạy `AnimationTimer` tốc độ mượt mà 30-60 FPS với phép nội suy vị trí mượt mà (Lerp visual coordinate).
-   - Đổi màu AGV theo trạng thái: 🟦 `IDLE`, 🟪 `BIDDING`, 🟩 `MOVING`, 🟧 `WAITING_MUTEX`, 🟥 `CRASHED`.
-   - Bảng Telemetry giám sát tọa độ, pin, Lamport Clock, trạng thái realtime của từng xe.
-   - Cửa sổ nhật ký P2P Wire Traffic / Gossip Log hiển thị toàn bộ gói tin nhị phân bay qua mạng thời gian thực.
-   - Các nút điều khiển tương tác: *"Spawn New Task"*, *"Simulate Head-On Conflict"*, *"Kill Selected AGV"*, *"Add New AGV"*.
+4. **Giao diện Dashboard JavaFX 2D Nâng cao (`AgvFleetSimulatorApp`)**:
+   - Module hóa độc lập: `MetricsPanel`, `WireTrafficPanel`, `ScenarioBannerOverlay`.
+   - Canvas 2D tốc độ mượt mà 60 FPS với phép nội suy vị trí Lerp.
+   - Trực quan hóa thuật toán:
+     - Ngã tư hiển thị trạng thái `RELEASED` (xám), `WANTED` (vàng nhấp nháy), `HELD` (đỏ kèm nhãn xe đang giữ). Mũi tên nét đứt vẽ từ xe đang hoãn đến xe đang giữ ngã tư.
+     - Đấu thầu CNP vẽ đường kết nối kèm chi phí từ Announcer tới Bidders; khung viền phát sáng xanh lá quanh xe thắng cuộc.
+     - P2P Heartbeat mesh hiển thị các đường nối theo chất lượng: xanh lá (< 1.5 chu kỳ), vàng (trễ > 1 chu kỳ), đỏ nét đứt (nghi ngờ dead).
+   - Nhật ký Wire Traffic Log giới hạn 2000 dòng, phân loại màu theo Opcode, hỗ trợ Pause/Resume, bộ lọc và xuất file CSV.
+   - Menu Scenarios kiểm thử 3 kịch bản: S1 (Head-on 2/4/8 xe), S2 (Adaptive auction 5 xe pin khác nhau), S3 (Crash hard/freeze/holding mutex) kèm banner và modal overlay PASS/FAIL.
+   - Chế độ thuyết trình (Presentation Mode) phóng to canvas, ẩn panel phụ, hỗ trợ phím tắt 1/2/3, Space, R.
 
 ---
 
@@ -474,3 +492,26 @@ mvn -q exec:java -Dexec.mainClass="com.agv.fleet.benchmark.MeshThroughputBenchma
 mvn -q exec:java -Dexec.mainClass="com.agv.fleet.scenario.ScenarioRunner"
 ```
 Kết quả chi tiết được xuất ra các file Markdown và CSV tại thư mục `docs/benchmarks/`.
+
+---
+
+## 9. Giả định và Giới hạn Thiết kế (Assumptions & Limitations)
+
+### 9.1. Kênh truyền thông Tin cậy và Có Thứ tự (Reliable FIFO Channels)
+- Toàn bộ liên lạc trực tiếp giữa các AGV dựa trên các kết nối TCP ổn định (`Netty TCP Sockets`).
+- Giả định rằng nếu hai node duy trì kết nối thì thông điệp gửi đi sẽ được nhận đầy đủ, đúng thứ tự (FIFO) và không bị suy hao hoặc trùng lặp ở tầng mạng.
+
+### 9.2. Giới hạn của Bộ phát hiện lỗi Heartbeat (Unreliable Failure Detector $\diamond\mathcal{P}$)
+- Cơ chế giám sát sự sống (`HeartbeatController`) dựa trên chu kỳ gửi nhịp tim định kỳ ($1000\text{ms}$) và khoảng timeout xác định ($3000\text{ms} - 5000\text{ms}$).
+- **Nguy cơ an toàn phân tán**: Đây là bộ phát hiện lỗi không hoàn hảo (*Eventually Perfect Failure Detector $\diamond\mathcal{P}$*). Khi mạng bị trễ đột biến (network spike), nghẽn cục bộ hoặc tiến trình JVM bị Stop-The-World GC kéo dài quá thời gian timeout, detector có thể **nghi ngờ sai** một node còn sống là đã chết (*false positive*).
+- **Hệ quả đối với Ricart-Agrawala**: Nếu node $A$ đang chiếm giữ ngã tư (`HELD`) nhưng bị các peer khác nghi ngờ nhầm là đã sập, các peer này sẽ xóa $A$ khỏi danh sách `pendingReplies` và cấp phép ngã tư cho node $B$ đang `WANTED`. Khi đó, điều kiện loại trừ tương hỗ (**Safety Property**) có thể bị vi phạm (cả $A$ và $B$ cùng đi vào ngã tư). Trong môi trường nhà máy thực tế, việc này bắt buộc phải kết hợp thêm lớp cảm biến tiệm cận LiDAR/Radar phần cứng độc lập của xe.
+
+### 9.3. Quy mô Hệ thống Khuyến nghị (Design Scale: 5–20 Nodes)
+- **Độ phức tạp thông điệp $O(N)$**: Mỗi lần xin vào một ngã tư, thuật toán Ricart-Agrawala yêu cầu gửi thông điệp tới tất cả $N-1$ peer và thu thập đủ $N-1$ phản hồi, tiêu tốn $2(N-1)$ thông điệp cho mỗi lần vào Critical Section.
+- **Độ phức tạp liên kết Full-Mesh $O(N^2)$**: Mạng lưới yêu cầu duy trì $N(N-1)/2$ kết nối TCP song công. Quy mô thiết kế tối ưu và hiệu quả nhất cho hệ thống Pure P2P này là từ **5 đến 20 AGV** hoạt động đồng thời trong cùng một phân khu kho hàng. Với cụm quy mô lớn hơn (>50 xe), cần áp dụng kiến trúc phân cụm (Clustering) hoặc phân vùng ngã tư theo phân khu để giảm thiểu broadcast.
+
+### 9.4. Kiểm chứng Va chạm Vật lý Thực tế (Ground-Truth Collision Verification)
+- Khác với việc chỉ kiểm tra trạng thái logic phần mềm, hệ thống tích hợp bộ đo va chạm thực tế (**Ground-Truth Collision Detector**) chạy nền độc lập trong simulator:
+  - Bán kính an toàn của thân xe AGV: $R = 0.25\text{m}$.
+  - Ngưỡng xác định va chạm: $d = \sqrt{(x_1 - x_2)^2 + (y_1 - y_2)^2} \le 0.45\text{m}$.
+  - Mọi kịch bản thử nghiệm tải cao (S1 với 200 lượt xe lao vào ngã tư) đều được đo đạc bằng ground-truth detector này với kết quả tuyệt đối **0 va chạm (0 Collisions)**.
