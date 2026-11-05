@@ -38,6 +38,7 @@ public class UdpPeerDiscovery {
     private final String multicastGroup;
     private final int multicastPort;
     private final long broadcastIntervalMs;
+    private final String preferredInterfaceName;
     private final EventLoopGroup eventLoopGroup;
     private final Consumer<PeerDiscoveryInfo> peerDiscoveredCallback;
 
@@ -55,12 +56,25 @@ public class UdpPeerDiscovery {
                             long broadcastIntervalMs,
                             EventLoopGroup eventLoopGroup,
                             Consumer<PeerDiscoveryInfo> peerDiscoveredCallback) {
+        this(thisNodeId, tcpHost, tcpPort, multicastGroup, multicastPort, broadcastIntervalMs, null, eventLoopGroup, peerDiscoveredCallback);
+    }
+
+    public UdpPeerDiscovery(long thisNodeId,
+                            String tcpHost,
+                            int tcpPort,
+                            String multicastGroup,
+                            int multicastPort,
+                            long broadcastIntervalMs,
+                            String preferredInterfaceName,
+                            EventLoopGroup eventLoopGroup,
+                            Consumer<PeerDiscoveryInfo> peerDiscoveredCallback) {
         this.thisNodeId = thisNodeId;
         this.tcpHost = Objects.requireNonNull(tcpHost, "tcpHost cannot be null");
         this.tcpPort = tcpPort;
         this.multicastGroup = (multicastGroup != null) ? multicastGroup : DEFAULT_MULTICAST_GROUP;
         this.multicastPort = (multicastPort > 0) ? multicastPort : DEFAULT_MULTICAST_PORT;
         this.broadcastIntervalMs = (broadcastIntervalMs > 0) ? broadcastIntervalMs : DEFAULT_BROADCAST_INTERVAL_MS;
+        this.preferredInterfaceName = preferredInterfaceName;
         this.eventLoopGroup = Objects.requireNonNull(eventLoopGroup, "eventLoopGroup cannot be null");
         this.peerDiscoveredCallback = Objects.requireNonNull(peerDiscoveredCallback, "peerDiscoveredCallback cannot be null");
     }
@@ -71,7 +85,7 @@ public class UdpPeerDiscovery {
         }
 
         this.groupAddress = new InetSocketAddress(multicastGroup, multicastPort);
-        this.networkInterface = findMulticastInterface();
+        this.networkInterface = findMulticastInterface(preferredInterfaceName);
 
         log.info("Starting UDP Discovery for Node {} on multicast {}:{} using interface: {} ({})",
                 thisNodeId, multicastGroup, multicastPort,
@@ -186,7 +200,33 @@ public class UdpPeerDiscovery {
      * Resolves an active network interface with IPv4 support capable of multicasting.
      */
     public static NetworkInterface findMulticastInterface() {
+        return findMulticastInterface(null);
+    }
+
+    /**
+     * Resolves an active network interface with IPv4 support capable of multicasting,
+     * prioritizing the preferred interface name if provided.
+     *
+     * @param preferredInterfaceName preferred interface name or display name (optional)
+     * @return suitable NetworkInterface
+     */
+    public static NetworkInterface findMulticastInterface(String preferredInterfaceName) {
         try {
+            if (preferredInterfaceName != null && !preferredInterfaceName.isBlank()) {
+                NetworkInterface ifaceByName = NetworkInterface.getByName(preferredInterfaceName);
+                if (ifaceByName != null && ifaceByName.isUp()) {
+                    return ifaceByName;
+                }
+                Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                for (NetworkInterface iface : Collections.list(interfaces)) {
+                    if (iface.isUp() && (iface.getName().equalsIgnoreCase(preferredInterfaceName) ||
+                            iface.getDisplayName().equalsIgnoreCase(preferredInterfaceName))) {
+                        return iface;
+                    }
+                }
+                log.warn("Preferred interface '{}' not found or not up. Falling back to default selection.", preferredInterfaceName);
+            }
+
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             NetworkInterface loopback = null;
             for (NetworkInterface iface : Collections.list(interfaces)) {

@@ -54,6 +54,7 @@ public class AgvNode {
     private final int requestedTcpPort;
     private final String multicastGroup;
     private final int multicastPort;
+    private final String networkInterfaceName;
     private final long discoveryIntervalMs;
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
@@ -89,6 +90,7 @@ public class AgvNode {
         this.requestedTcpPort = builder.tcpPort;
         this.multicastGroup = builder.multicastGroup;
         this.multicastPort = builder.multicastPort;
+        this.networkInterfaceName = builder.networkInterfaceName;
         this.discoveryIntervalMs = builder.discoveryIntervalMs;
         this.heartbeatIntervalMs = builder.heartbeatIntervalMs;
         this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
@@ -206,6 +208,7 @@ public class AgvNode {
                 multicastGroup,
                 multicastPort,
                 discoveryIntervalMs,
+                networkInterfaceName,
                 workerGroup,
                 peerManager::onPeerDiscovered
         );
@@ -429,6 +432,18 @@ public class AgvNode {
         return peerPositionTable;
     }
 
+    public void addMutexEventListener(com.agv.fleet.distributed.mutex.RicartAgrawalaEngine.MutexEventListener listener) {
+        if (mutexEngine != null) {
+            mutexEngine.addMutexEventListener(listener);
+        }
+    }
+
+    public void addCnpEventListener(com.agv.fleet.distributed.auction.CnpEngine.CnpEventListener listener) {
+        if (cnpEngine != null) {
+            cnpEngine.addCnpEventListener(listener);
+        }
+    }
+
     public void resetMutexEngine() {
         if (mutexEngine != null) {
             mutexEngine.resetAll();
@@ -601,6 +616,10 @@ public class AgvNode {
         return battery;
     }
 
+    public double getBatteryLevel() {
+        return battery.getLevel();
+    }
+
     public Position2D getPosition() {
         return position;
     }
@@ -643,6 +662,7 @@ public class AgvNode {
         private int tcpPort = 0; // 0 = ephemeral random port
         private String multicastGroup = UdpPeerDiscovery.DEFAULT_MULTICAST_GROUP;
         private int multicastPort = UdpPeerDiscovery.DEFAULT_MULTICAST_PORT;
+        private String networkInterfaceName;
         private long discoveryIntervalMs = UdpPeerDiscovery.DEFAULT_BROADCAST_INTERVAL_MS;
         private long heartbeatIntervalMs = HeartbeatController.DEFAULT_HEARTBEAT_INTERVAL_MS;
         private long heartbeatTimeoutMs = HeartbeatController.DEFAULT_HEARTBEAT_TIMEOUT_MS;
@@ -673,6 +693,11 @@ public class AgvNode {
 
         public Builder multicastPort(int multicastPort) {
             this.multicastPort = multicastPort;
+            return this;
+        }
+
+        public Builder networkInterfaceName(String networkInterfaceName) {
+            this.networkInterfaceName = networkInterfaceName;
             return this;
         }
 

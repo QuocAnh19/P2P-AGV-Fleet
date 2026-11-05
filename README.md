@@ -62,12 +62,16 @@ Tổng chiều dài **Fixed Header** là đúng **36 Bytes**, theo chuẩn Big-E
 | :---: | :---: | :--- | :--- |
 | `0x01` | `1` | `PEER_DISCOVERY` | Phát hiện và quảng bá sự hiện diện của node AGV mới trong mạng |
 | `0x02` | `2` | `HEARTBEAT` | Kiểm tra nhịp tim (liveness check) định kỳ giữa các peer |
+| `0x03` | `3` | `POSITION_UPDATE` | Quảng bá tọa độ thời gian thực của xe AGV khi di chuyển qua các ô lưới |
+| `0x04` | `4` | `PING` | Gói tin đo trễ mạng Round-Trip Time mang 8-byte nanoTime gửi |
+| `0x05` | `5` | `PONG` | Phản hồi đo trễ dội lại nanoTime đo RTT một chiều = RTT/2 |
 | `0x10` | `16` | `MUTEX_REQUEST` | Yêu cầu vào vùng tài nguyên găng (Thuật toán Ricart-Agrawala) |
 | `0x11` | `17` | `MUTEX_REPLY` | Phản hồi chấp thuận yêu cầu vùng găng |
 | `0x12` | `18` | `MUTEX_RELEASE` | Thông báo giải phóng vùng tài nguyên găng (ngã tư, trạm sạc) |
 | `0x20` | `32` | `TASK_ANNOUNCE` | Phát lệnh công bố nhiệm vụ mới (Contract Net Protocol) |
 | `0x21` | `33` | `TASK_BID` | Gửi gói thầu chào giá / chi phí thực hiện nhiệm vụ từ AGV |
 | `0x22` | `34` | `TASK_AWARD` | Trao quyền thực hiện nhiệm vụ cho AGV thắng thầu |
+| `0x23` | `35` | `TASK_COMPLETE` | Thông báo nhiệm vụ đã được thực hiện hoàn tất |
 
 ---
 
@@ -323,3 +327,150 @@ Hoặc chạy trực tiếp lớp chính:
 ```bash
 mvn compile exec:java -Dexec.mainClass="com.agv.fleet.Main"
 ```
+
+---
+
+## 7. Hướng dẫn Demo Phân tán trên 2 Máy tính qua Mạng LAN (`NodeCli`)
+
+Để chứng minh tính chất **Pure P2P phi tập trung** (không cần Server trung tâm, không cần Broker như Kafka/MQTT/RabbitMQ), dự án cung cấp công cụ dòng lệnh độc lập **`NodeCli`** (`com.agv.fleet.cli.NodeCli`). Mỗi máy tính đóng vai trò là một xe tự hành AGV thật, giao tiếp qua sóng mạng LAN thật.
+
+### 7.1. Chuẩn bị Môi trường Mạng & Cấu hình Tường lửa (Firewall)
+
+> [!CAUTION]
+> **LƯU Ý QUAN TRỌNG VỀ WI-FI CÔNG CỘNG (Trường học, Ký túc xá, Quán Cafe, Công ty):**
+> Hầu hết các Access Point Wi-Fi công cộng đều kích hoạt tính năng **Wireless Client Isolation** hoặc **IGMP Snooping / Multicast Filtering**, tự động chặn các gói tin **UDP Multicast** giữa các thiết bị không dây. 
+> 
+> **Khuyến nghị kết nối khi demo:**
+> 1. **Tốt nhất:** Dùng điện thoại di động bật **Mobile Hotspot (Điểm phát sóng di động Wi-Fi)** và cho 2 máy tính kết nối vào mạng hotspot này.
+> 2. **Hoặc:** Cắm chung 2 máy tính vào cùng một Switch / Router mạng dây (Ethernet LAN).
+
+#### Mở cổng Firewall trên Windows (Chạy PowerShell với quyền Administrator):
+Trên cả Máy 1 và Máy 2, chạy các lệnh PowerShell sau để cho phép UDP Multicast và cổng TCP truyền tin:
+
+```powershell
+# Cho phép nhận gói tin UDP Multicast Discovery trên nhóm 239.255.0.1:20156
+New-NetFirewallRule -DisplayName "AGV Fleet UDP Discovery" -Direction Inbound -LocalPort 20156 -Protocol UDP -Action Allow
+
+# Cho phép kết nối TCP Mesh trên các cổng 19500-19510
+New-NetFirewallRule -DisplayName "AGV Fleet TCP Mesh" -Direction Inbound -LocalPort 19500-19510 -Protocol TCP -Action Allow
+```
+
+*(Nếu dùng Linux / Ubuntu: `sudo ufw allow 20156/udp && sudo ufw allow 19500:19510/tcp`)*
+
+---
+
+### 7.2. Khởi chạy AGV Node trên Máy 1 (Node ID = 1)
+
+Mở Terminal trên **Máy tính 1** (giả sử IP LAN là `192.168.43.10`):
+
+```bash
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.cli.NodeCli" -Dexec.args="--id 1 --port 19501 --multicast-group 239.255.0.1:20156"
+```
+
+Console hiển thị:
+```text
+================================================================================
+              AGV FLEET HEADLESS NODE (ID: 1) ONLINE
+================================================================================
+  Host IP         : 192.168.43.10
+  TCP Port        : 19501
+  Multicast Group : 239.255.0.1:20156
+  Interface       : AUTO-DETECT
+  Battery Level   : 100.0%
+  Initial Position: (0.0, 0.0)
+--------------------------------------------------------------------------------
+Type 'help' for console commands or 'exit' to terminate.
+================================================================================
+```
+
+---
+
+### 7.3. Khởi chạy AGV Node trên Máy 2 (Node ID = 2)
+
+Mở Terminal trên **Máy tính 2** (giả sử IP LAN là `192.168.43.20`):
+
+```bash
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.cli.NodeCli" -Dexec.args="--id 2 --port 19502 --multicast-group 239.255.0.1:20156"
+```
+
+---
+
+### 7.4. Diễn tiến Sự kiện Tự động (Logs Ngắn gọn)
+
+Ngay khi Máy 2 khởi động, cơ chế **UDP Multicast Discovery** tự động bắt sóng:
+- **Trên Máy 1** xuất hiện ngay:
+  ```text
+  [PEER JOIN] Node 2 connected from /192.168.43.20:19502 (Total peers: 1)
+  ```
+- **Trên Máy 2** xuất hiện ngay:
+  ```text
+  [PEER JOIN] Node 1 connected from /192.168.43.10:19501 (Total peers: 1)
+  ```
+
+---
+
+### 7.5. Kịch bản Thử nghiệm Trực tiếp qua Console
+
+#### Kịch bản A: Đo độ trễ mạng thực tế (Diagnostic Ping & RTT)
+Trên Máy 1, gõ:
+```text
+ping 2
+```
+Kết quả hiển thị:
+```text
+[PING SUCCESS] Node 2: RTT = 1.240 ms
+```
+
+#### Kịch bản B: Đấu thầu công việc tự động (Contract Net Protocol)
+Trên Máy 1, phát thầu 1 nhiệm vụ lấy hàng ở (2, 2) giao tới (8, 8):
+```text
+announce TASK-PALLET-01 2.0 2.0 8.0 8.0
+```
+- Máy 1 hiển thị:
+  ```text
+  [CNP ANNOUNCE] Announced task TASK-PALLET-01 (Pickup: (2.0, 2.0) -> Delivery: (8.0, 8.0))
+  ```
+- Máy 2 nhận bản tin đấu thầu, tính toán hàm chi phí $Cost = Dist + w \times (100 - Battery)$ và tự nộp thầu:
+  ```text
+  [CNP BID] Submitted bid for task TASK-PALLET-01 (Cost: 6.83, Battery: 100.0%)
+  ```
+- Hết thời gian thu thầu (500ms), Máy 1 trao thầu cho Máy 2:
+  - Máy 2 hiển thị:
+    ```text
+    [CNP WON] Won task TASK-PALLET-01! Assigned to this AGV.
+    ```
+
+#### Kịch bản C: Giải quyết tranh chấp Ngã tư (Ricart-Agrawala Mutex)
+Trên Máy 1, xin vào ngã tư `(4, 4)`:
+```text
+mutex 4 4
+```
+- Máy 1 phát lệnh `MUTEX_REQUEST`:
+  ```text
+  [MUTEX REQUEST] Requesting access to intersection (4, 4) with timestamp 18
+  [MUTEX ACQUIRED] Granted access to intersection (4, 4) - entering critical section!
+  Holding intersection (4, 4) for 3 seconds...
+  [MUTEX RELEASED] Exited intersection (4, 4)
+  ```
+- Nếu trong lúc Máy 1 đang giữ ngã tư, Máy 2 cũng gõ `mutex 4 4`, Máy 2 sẽ bị trì hoãn (`deferred`) và chỉ được phép vào ngay sau khi Máy 1 nhả quyền `RELEASED`.
+
+---
+
+## 8. Đo lường Hiệu năng & Kiểm thử Kịch bản Chuyên sâu (Benchmarks & Scenarios)
+
+Dự án cung cấp bộ công cụ đo lường và thẩm định hệ thống phân tán không cần giao diện đồ họa (Headless):
+
+```bash
+# 1. Đo độ trễ RTT một chiều (20,000 vòng lặp):
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.benchmark.LatencyBenchmark"
+
+# 2. Đo thông lượng mã hóa/giải mã Codec Netty:
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.benchmark.CodecThroughputBenchmark"
+
+# 3. Đo thông lượng Mesh 5 và 10 nodes:
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.benchmark.MeshThroughputBenchmark"
+
+# 4. Chạy toàn bộ 3 kịch bản kiểm thử phân tán S1, S2, S3 (200 vòng lặp):
+mvn -q exec:java -Dexec.mainClass="com.agv.fleet.scenario.ScenarioRunner"
+```
+Kết quả chi tiết được xuất ra các file Markdown và CSV tại thư mục `docs/benchmarks/`.

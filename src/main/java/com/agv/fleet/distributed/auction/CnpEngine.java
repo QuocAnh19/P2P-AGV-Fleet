@@ -60,6 +60,58 @@ public class CnpEngine {
     private final ConcurrentMap<String, TaskAnnouncePayload> observedTasks = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> mySubmittedBids = new ConcurrentHashMap<>(); // taskId -> announcerNodeId
     private final CopyOnWriteArrayList<TaskAssignmentListener> assignmentListeners = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<CnpEventListener> cnpEventListeners = new CopyOnWriteArrayList<>();
+
+    /**
+     * Callback interface for Contract Net Protocol auction events.
+     */
+    public interface CnpEventListener {
+        default void onBidSubmitted(String taskId, double cost, double battery) {}
+        default void onTaskWon(Task task) {}
+        default void onTaskLost(String taskId, long winnerNodeId) {}
+        default void onTaskAnnounced(Task task) {}
+        default void onTaskCompleted(String taskId, long contractorNodeId) {}
+    }
+
+    public void addCnpEventListener(CnpEventListener listener) {
+        if (listener != null) {
+            cnpEventListeners.add(listener);
+        }
+    }
+
+    public void removeCnpEventListener(CnpEventListener listener) {
+        cnpEventListeners.remove(listener);
+    }
+
+    private void notifyBidSubmitted(String taskId, double cost, double battery) {
+        for (CnpEventListener l : cnpEventListeners) {
+            try { l.onBidSubmitted(taskId, cost, battery); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyTaskWon(Task task) {
+        for (CnpEventListener l : cnpEventListeners) {
+            try { l.onTaskWon(task); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyTaskLost(String taskId, long winnerNodeId) {
+        for (CnpEventListener l : cnpEventListeners) {
+            try { l.onTaskLost(taskId, winnerNodeId); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyTaskAnnounced(Task task) {
+        for (CnpEventListener l : cnpEventListeners) {
+            try { l.onTaskAnnounced(task); } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyTaskCompleted(String taskId, long contractorNodeId) {
+        for (CnpEventListener l : cnpEventListeners) {
+            try { l.onTaskCompleted(taskId, contractorNodeId); } catch (Exception ignored) {}
+        }
+    }
 
     public CnpEngine(long thisNodeId,
                      PeerManager peerManager,
@@ -155,6 +207,7 @@ public class CnpEngine {
         log.info("Node {}: Announcing task {} for auction (timeout={}ms, peers={})",
                 thisNodeId, task.getTaskId(), auctionTimeoutMs, peerManager.getActivePeerCount());
         peerManager.broadcast(announceMsg);
+        notifyTaskAnnounced(task);
 
         return session;
     }
@@ -230,6 +283,7 @@ public class CnpEngine {
                 String.format(Locale.US, "%.1f", battery),
                 String.format(Locale.US, "%.2f", cost));
         peerManager.send(payload.announcerNodeId(), bidMsg);
+        notifyBidSubmitted(payload.taskId(), cost, battery);
     }
 
     /**
@@ -364,6 +418,7 @@ public class CnpEngine {
                     log.error("Error notifying task assignment listener", e);
                 }
             }
+            notifyTaskWon(task);
         } else {
             // Another AGV won or winnerNodeId == -1 (no winner). If this AGV was bidding for this task, revert to IDLE
             if (mySubmittedBids.containsKey(taskId)) {
@@ -376,6 +431,9 @@ public class CnpEngine {
                         log.info("Node {}: Lost auction for task {} to Node {}. Reverted state to IDLE.",
                                 thisNodeId, taskId, winnerNodeId);
                     }
+                }
+                if (winnerNodeId != thisNodeId && winnerNodeId != -1L) {
+                    notifyTaskLost(taskId, winnerNodeId);
                 }
             }
         }
@@ -408,6 +466,7 @@ public class CnpEngine {
             session.getTask().setStatus(Task.Status.COMPLETED);
             activeAuctions.remove(taskId);
         }
+        notifyTaskCompleted(taskId, contractorNodeId);
     }
 
     /**

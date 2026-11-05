@@ -17,6 +17,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.LongSupplier;
 
 /**
@@ -32,6 +33,50 @@ public class RicartAgrawalaEngine {
     private final LamportClock lamportClock;
     private final LongSupplier sequenceSupplier;
     private final ConcurrentMap<String, CellMutex> cellMutexes = new ConcurrentHashMap<>();
+    private final List<MutexEventListener> mutexEventListeners = new CopyOnWriteArrayList<>();
+
+    /**
+     * Callback interface for mutual exclusion state transitions and events.
+     */
+    public interface MutexEventListener {
+        default void onMutexRequested(String cellId, long requestTimestamp) {}
+        default void onMutexAcquired(String cellId) {}
+        default void onMutexReleased(String cellId) {}
+    }
+
+    public void addMutexEventListener(MutexEventListener listener) {
+        if (listener != null) {
+            mutexEventListeners.add(listener);
+        }
+    }
+
+    public void removeMutexEventListener(MutexEventListener listener) {
+        mutexEventListeners.remove(listener);
+    }
+
+    private void notifyMutexRequested(String cellId, long requestTimestamp) {
+        for (MutexEventListener listener : mutexEventListeners) {
+            try {
+                listener.onMutexRequested(cellId, requestTimestamp);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyMutexAcquired(String cellId) {
+        for (MutexEventListener listener : mutexEventListeners) {
+            try {
+                listener.onMutexAcquired(cellId);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyMutexReleased(String cellId) {
+        for (MutexEventListener listener : mutexEventListeners) {
+            try {
+                listener.onMutexReleased(cellId);
+            } catch (Exception ignored) {}
+        }
+    }
 
     public RicartAgrawalaEngine(long thisNodeId,
                                 PeerManager peerManager,
@@ -112,6 +157,7 @@ public class RicartAgrawalaEngine {
                 log.info("Node {}: No other peers active in network. Immediately acquired cell {}", thisNodeId, cellId);
                 cellMutex.setState(MutexState.HELD);
                 grantFuture.complete(null);
+                notifyMutexAcquired(cellId);
                 return grantFuture;
             }
 
@@ -122,6 +168,7 @@ public class RicartAgrawalaEngine {
 
             log.info("Node {}: Requesting cell {} (reqTs={}, awaiting {} peers: {})",
                     thisNodeId, cellId, reqTimestamp, cellMutex.getPendingRepliesCount(), cellMutex.getPendingReplies());
+            notifyMutexRequested(cellId, reqTimestamp);
 
             // 5. Broadcast MUTEX_REQUEST (Opcode 0x10)
             MutexRequestPayload payload = new MutexRequestPayload(cellId, reqTimestamp, thisNodeId);
@@ -235,6 +282,7 @@ public class RicartAgrawalaEngine {
                 if (future != null && !future.isDone()) {
                     log.info("Node {}: All replies received! Successfully ACQUIRED cell {}", thisNodeId, cellId);
                     future.complete(null);
+                    notifyMutexAcquired(cellId);
                 }
             }
         } finally {
@@ -264,6 +312,7 @@ public class RicartAgrawalaEngine {
 
             // 1. Transition state to RELEASED
             cellMutex.setState(MutexState.RELEASED);
+            notifyMutexReleased(cellId);
 
             // 2. Drain all deferred requests
             List<Long> deferredNodes = cellMutex.drainDeferred();
@@ -377,6 +426,7 @@ public class RicartAgrawalaEngine {
                                 log.info("Node {}: Promoted to HELD for cell {} after peer {} crashed",
                                         thisNodeId, cellMutex.getCellId(), droppedNodeId);
                                 future.complete(null);
+                                notifyMutexAcquired(cellMutex.getCellId());
                             }
                         }
                     }
