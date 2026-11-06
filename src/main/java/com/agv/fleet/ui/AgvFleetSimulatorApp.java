@@ -115,6 +115,36 @@ public class AgvFleetSimulatorApp extends Application {
     private TimelinePanel timelinePanel;
     private final Map<Long, GridPoint> lastReportedGridPos = new ConcurrentHashMap<>();
 
+    // Flying Packet Animation & Presentation Banner
+    public static class FlyingPacket {
+        final double startX, startY;
+        final double endX, endY;
+        final Color color;
+        final long startTimeMs;
+        final long durationMs;
+        final boolean isBroadcast;
+
+        public FlyingPacket(double startX, double startY, double endX, double endY, Color color, long startTimeMs, long durationMs, boolean isBroadcast) {
+            this.startX = startX;
+            this.startY = startY;
+            this.endX = endX;
+            this.endY = endY;
+            this.color = color;
+            this.startTimeMs = startTimeMs;
+            this.durationMs = durationMs;
+            this.isBroadcast = isBroadcast;
+        }
+    }
+
+    private final List<FlyingPacket> flyingPackets = new CopyOnWriteArrayList<>();
+    private volatile String presentationBannerText = null;
+    private volatile long presentationBannerExpiryMs = 0;
+
+    public void setPresentationBanner(String message) {
+        this.presentationBannerText = message;
+        this.presentationBannerExpiryMs = System.currentTimeMillis() + 3000L;
+    }
+
     // Simulation Speed & Physics
     private volatile double simulationSpeedMultiplier = 1.0;
     private volatile boolean fleetPaused = false;
@@ -279,6 +309,12 @@ public class AgvFleetSimulatorApp extends Application {
         Tooltip.install(pauseFleetBtn, new Tooltip("Tạm dừng hoặc tiếp tục toàn bộ đội xe AGV [Phím Space]"));
         pauseFleetBtn.setOnAction(e -> toggleFleetPause());
 
+        // Step Mode Button
+        Button stepModeBtn = new Button("⏭ Bước (Step)");
+        stepModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
+        Tooltip.install(stepModeBtn, new Tooltip("Khi Pause, bấm để chạy đúng 1 tick mô phỏng (250ms) rồi dừng lại [Phím S]"));
+        stepModeBtn.setOnAction(e -> executeSingleStep());
+
         // Auto Demo Button
         autoDemoBtn = new ToggleButton("▶ Bắt đầu demo (Auto)");
         autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
@@ -297,7 +333,7 @@ public class AgvFleetSimulatorApp extends Application {
         Tooltip.install(exportReportBtn, new Tooltip("Xuất dữ liệu hiệu năng Metrics và Wire Traffic Log ra file CSV"));
         exportReportBtn.setOnAction(e -> exportFullReport());
 
-        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, speedControls, pauseFleetBtn, autoDemoBtn, presentationModeBtn, exportReportBtn);
+        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, speedControls, pauseFleetBtn, stepModeBtn, autoDemoBtn, presentationModeBtn, exportReportBtn);
 
         // KPI Summary Badges Row
         HBox kpiRow = new HBox(8);
@@ -569,6 +605,8 @@ public class AgvFleetSimulatorApp extends Application {
                 showS3ChoiceDialog();
             } else if (code == KeyCode.SPACE) {
                 toggleFleetPause();
+            } else if (code == KeyCode.S || code == KeyCode.N) {
+                executeSingleStep();
             } else if (code == KeyCode.R) {
                 resetFleetToDefault();
             } else if (code == KeyCode.P || code == KeyCode.F11) {
@@ -609,6 +647,18 @@ public class AgvFleetSimulatorApp extends Application {
             pauseFleetBtn.setText("⏸ Tạm dừng");
             pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
         }
+    }
+
+    private void executeSingleStep() {
+        if (!fleetPaused) {
+            toggleFleetPause();
+        }
+        if (physicsController != null) {
+            physicsController.stepOneTick();
+        }
+        renderCanvas();
+        mapStatusBar.setText("Chế độ Step: Đã thực thi 1 bước mô phỏng (250ms)");
+        setPresentationBanner("Chế độ Step: Đã chạy 1 bước mô phỏng logic & vật lý xe (250ms)");
     }
 
     // =========================================================================
@@ -1237,6 +1287,128 @@ public class AgvFleetSimulatorApp extends Application {
             gc.setFill(batColor);
             gc.fillRect(batX, batY, fillW, batHeight);
         }
+
+        // 7. Draw Flying Business Packets
+        long now = System.currentTimeMillis();
+        for (FlyingPacket p : flyingPackets) {
+            double progress = (now - p.startTimeMs) / (double) p.durationMs;
+            if (progress >= 1.0) {
+                flyingPackets.remove(p);
+                continue;
+            }
+
+            double curX = p.startX + progress * (p.endX - p.startX);
+            double curY = p.startY + progress * (p.endY - p.startY);
+
+            // Glow outer halo
+            gc.setFill(p.color.deriveColor(0, 1, 1, 0.45));
+            gc.fillOval(curX - 6, curY - 6, 12, 12);
+
+            // Packet dot core
+            gc.setFill(p.color);
+            gc.fillOval(curX - 3.5, curY - 3.5, 7, 7);
+            gc.setStroke(Color.WHITE);
+            gc.setLineWidth(1.0);
+            gc.strokeOval(curX - 3.5, curY - 3.5, 7, 7);
+        }
+
+        // 8. Draw Flying Packet Legend (Bottom-Left)
+        drawPacketLegend(gc);
+
+        // 9. Draw Presentation Banner (Top Center)
+        if (presentationBannerText != null && now < presentationBannerExpiryMs) {
+            double bannerW = Math.min(720, canvas.getWidth() - 40);
+            double bannerH = 34.0;
+            double bannerX = (canvas.getWidth() - bannerW) / 2.0;
+            double bannerY = 10.0;
+
+            gc.setFill(Color.web("#0B132B", 0.94));
+            gc.fillRoundRect(bannerX, bannerY, bannerW, bannerH, 8, 8);
+            gc.setStroke(Color.web("#38BDF8"));
+            gc.setLineWidth(1.5);
+            gc.strokeRoundRect(bannerX, bannerY, bannerW, bannerH, 8, 8);
+
+            gc.setFill(Color.web("#FDE047"));
+            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+            gc.fillText("📢 " + presentationBannerText, bannerX + 14, bannerY + 22);
+        }
+    }
+
+    private void drawPacketLegend(GraphicsContext gc) {
+        double legX = 10.0;
+        double legY = canvas.getHeight() - 42.0;
+        double legW = 390.0;
+        double legH = 32.0;
+
+        gc.setFill(Color.web("#0F172A", 0.85));
+        gc.fillRoundRect(legX, legY, legW, legH, 6, 6);
+        gc.setStroke(Color.web("#1E293B"));
+        gc.setLineWidth(1.0);
+        gc.strokeRoundRect(legX, legY, legW, legH, 6, 6);
+
+        gc.setFill(Color.web("#64748B"));
+        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
+        gc.fillText("GÓI TIN:", legX + 8, legY + 20);
+
+        double curX = legX + 55;
+        drawLegendBadge(gc, "MUTEX", Color.web("#D97706"), curX, legY + 13);
+        curX += 65;
+        drawLegendBadge(gc, "ANNOUNCE", Color.web("#2563EB"), curX, legY + 13);
+        curX += 75;
+        drawLegendBadge(gc, "BID", Color.web("#9333EA"), curX, legY + 13);
+        curX += 50;
+        drawLegendBadge(gc, "AWARD", Color.web("#DC2626"), curX, legY + 13);
+        curX += 65;
+        drawLegendBadge(gc, "COMPLETE", Color.web("#0D9488"), curX, legY + 13);
+    }
+
+    private void drawLegendBadge(GraphicsContext gc, String text, Color color, double x, double y) {
+        gc.setFill(color);
+        gc.fillOval(x, y, 6, 6);
+        gc.setFill(Color.web("#CBD5E1"));
+        gc.setFont(Font.font("Segoe UI", 8.5));
+        gc.fillText(text, x + 9, y + 6);
+    }
+
+    private void triggerFlyingPacketAnimation(Opcode op, long senderId, long receiverId) {
+        AgvRobot sender = robots.stream().filter(r -> r.getNodeId() == senderId).findFirst().orElse(null);
+        if (sender == null) return;
+
+        double startX = sender.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
+        double startY = sender.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+        Color color = getOpcodeCanvasColor(op);
+        long now = System.currentTimeMillis();
+
+        if (receiverId < 0) {
+            for (AgvRobot receiver : robots) {
+                if (receiver.getNodeId() != senderId && !receiver.isCrashed()) {
+                    double endX = receiver.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
+                    double endY = receiver.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+                    flyingPackets.add(new FlyingPacket(startX, startY, endX, endY, color, now, 300L, true));
+                }
+            }
+        } else {
+            AgvRobot receiver = robots.stream().filter(r -> r.getNodeId() == receiverId).findFirst().orElse(null);
+            if (receiver != null) {
+                double endX = receiver.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
+                double endY = receiver.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+                flyingPackets.add(new FlyingPacket(startX, startY, endX, endY, color, now, 300L, false));
+            }
+        }
+    }
+
+    private Color getOpcodeCanvasColor(Opcode op) {
+        if (op == null) return Color.web("#94A3B8");
+        return switch (op) {
+            case MUTEX_REQUEST -> Color.web("#D97706");
+            case MUTEX_REPLY -> Color.web("#16A34A");
+            case MUTEX_RELEASE -> Color.web("#64748B");
+            case TASK_ANNOUNCE -> Color.web("#2563EB");
+            case TASK_BID -> Color.web("#9333EA");
+            case TASK_AWARD -> Color.web("#DC2626");
+            case TASK_COMPLETE -> Color.web("#0D9488");
+            default -> Color.web("#94A3B8");
+        };
     }
 
     private void drawZoneAnnotations(GraphicsContext gc) {
@@ -1436,6 +1608,19 @@ public class AgvFleetSimulatorApp extends Application {
         if (perNodePanel != null) {
             perNodePanel.recordPacketIn(receiverId, op);
             perNodePanel.recordPacketOut(senderId, op);
+        }
+
+        // Animate flying packet for business messages & update presentation banner
+        if (WireTrafficLog.isBusinessOpcode(op)) {
+            triggerFlyingPacketAnimation(op, senderId, receiverId);
+            switch (op) {
+                case MUTEX_REQUEST -> setPresentationBanner(String.format("AGV #%d yêu cầu vào ngã tư (L=%d)", senderId, lamport));
+                case MUTEX_REPLY -> setPresentationBanner(String.format("AGV #%d cấp quyền qua ngã tư (Ricart-Agrawala Grant)", senderId));
+                case MUTEX_RELEASE -> setPresentationBanner(String.format("AGV #%d giải phóng ngã tư -> Nhường xe kế tiếp", senderId));
+                case TASK_ANNOUNCE -> setPresentationBanner(String.format("AGV #%d phát thầu mở phiên đấu giá CNP", senderId));
+                case TASK_AWARD -> setPresentationBanner(String.format("Phân bổ trao thầu: %s", detail));
+                case TASK_COMPLETE -> setPresentationBanner(String.format("AGV #%d đã giao hàng & hoàn thành nhiệm vụ!", senderId));
+            }
         }
     }
 
