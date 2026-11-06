@@ -3,7 +3,7 @@
 # RAM: 108 MB allocated (Max JVM: 4022 MB)
 # JDK: 23 (Oracle Corporation)
 # OS: Windows 11 10.0 (amd64)
-# Date: 2026-11-06T16:57:44.2913487
+# Date: 2026-11-06T18:10:01.0339687
 Node_Count,Duration_sec,Broadcasts_Sent,Expected_Deliveries,Received_Deliveries,Packets_Lost,Loss_Rate_pct,CRC_Errors,Delivered_msgs_per_sec,Throughput_MB_per_sec
-5,2 s,201,674,806,696,550,932,255,764,31.705%,0,274,049.5,18.03
-10,2 s,67,222,604,998,605,178,0,0.000%,0,300,615.4,19.78
+5,2,108984,435936,391575,44361,10.176,0,195379.8,12.86
+10,2,79721,717489,609587,107902,15.039,0,298144.4,19.62

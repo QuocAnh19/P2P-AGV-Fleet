@@ -56,16 +56,21 @@ public class FleetMetricsCollectorTest {
         collector.recordMessageProcessed();
         assertEquals(3, collector.getTotalMessagesProcessed());
 
-        collector.recordLatencySample(1.0);
-        collector.recordLatencySample(2.0);
-        collector.recordLatencySample(3.0);
-        collector.recordLatencySample(4.0);
-        collector.recordLatencySample(10.0);
+        // Add 10 latency samples
+        for (int i = 1; i <= 10; i++) {
+            collector.recordLatencySample(i * 1.0);
+        }
 
         collector.tickPeriodicSample();
 
-        assertTrue(collector.getP50LatencyMs() >= 2.0);
-        assertTrue(collector.getP95LatencyMs() >= 4.0);
+        // Check average latency: (1 + 2 + ... + 10) / 10 = 5.5
+        assertEquals(5.5, collector.getAverageLatencyMs(), 0.001);
+
+        // p50Index = round(9 * 0.5) = 5 -> 6.0
+        assertEquals(6.0, collector.getP50LatencyMs(), 0.001);
+
+        // p95Index = round(9 * 0.95) = 9 -> 10.0
+        assertEquals(10.0, collector.getP95LatencyMs(), 0.001);
     }
 
     @Test

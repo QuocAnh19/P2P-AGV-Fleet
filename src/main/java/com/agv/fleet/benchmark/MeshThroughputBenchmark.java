@@ -49,14 +49,16 @@ public class MeshThroughputBenchmark {
         List<String> headers = List.of(
                 "Nodes (N)", "Duration", "Sent", "Expected", "Received", "Lost", "Loss Rate", "CRC Errors", "Delivered msgs/s", "MB/s"
         );
-        List<List<String>> rows = new ArrayList<>();
+        List<List<String>> tableRows = new ArrayList<>();
+        List<List<String>> csvRows = new ArrayList<>();
 
         for (int nodeCount : NODE_COUNTS) {
             System.out.printf(">>> Starting benchmark for N = %d nodes in full P2P mesh...%n", nodeCount);
             MeshResult res = benchmarkMesh(nodeCount, durationSeconds);
             results.add(res);
 
-            rows.add(List.of(
+            // Table format for human-readable console output
+            tableRows.add(List.of(
                     String.valueOf(res.nodeCount()),
                     durationSeconds + " s",
                     String.format("%,d", res.totalSent()),
@@ -68,17 +70,31 @@ public class MeshThroughputBenchmark {
                     String.format("%,.1f", res.deliveredMsgsPerSec()),
                     String.format("%,.2f", res.throughputMbPerSec())
             ));
+
+            // Pure integer CSV format without thousand-separator commas
+            csvRows.add(List.of(
+                    String.valueOf(res.nodeCount()),
+                    String.valueOf(durationSeconds),
+                    String.valueOf(res.totalSent()),
+                    String.valueOf(res.expectedDeliveries()),
+                    String.valueOf(res.totalReceived()),
+                    String.valueOf(res.packetsLost()),
+                    String.format(java.util.Locale.US, "%.3f", res.lossRatePercent()),
+                    String.valueOf(res.crcErrors()),
+                    String.format(java.util.Locale.US, "%.1f", res.deliveredMsgsPerSec()),
+                    String.format(java.util.Locale.US, "%.2f", res.throughputMbPerSec())
+            ));
         }
 
-        BenchmarkUtils.printTable("P2P Mesh Broadcast Throughput & Reliability Benchmark", headers, rows);
+        BenchmarkUtils.printTable("P2P Mesh Broadcast Throughput & Reliability Benchmark", headers, tableRows);
 
-        // Persist to CSV
+        // Persist to CSV without thousand commas
         List<String> csvHeaders = List.of(
                 "Node_Count", "Duration_sec", "Broadcasts_Sent", "Expected_Deliveries",
                 "Received_Deliveries", "Packets_Lost", "Loss_Rate_pct", "CRC_Errors",
                 "Delivered_msgs_per_sec", "Throughput_MB_per_sec"
         );
-        File csv = BenchmarkUtils.writeCsv("mesh_throughput.csv", csvHeaders, rows);
+        File csv = BenchmarkUtils.writeCsv("mesh_throughput.csv", csvHeaders, csvRows);
         System.out.println("Benchmark results saved to: " + csv.getAbsolutePath());
 
         return results;
@@ -175,8 +191,8 @@ public class MeshThroughputBenchmark {
             long actualDurationNanos = System.nanoTime() - startNanos;
             double durationSec = actualDurationNanos / 1_000_000_000.0;
 
-            // Allow short drain period for remaining in-flight socket buffers
-            long drainEnd = System.currentTimeMillis() + 800;
+            // Allow 2-second drain period for remaining in-flight socket buffers
+            long drainEnd = System.currentTimeMillis() + 2000;
             while (System.currentTimeMillis() < drainEnd) {
                 Thread.onSpinWait();
             }

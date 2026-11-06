@@ -54,6 +54,32 @@ public class WireTrafficLogTest {
     }
 
     @Test
+    public void testThousandSystemAndFiftyBusinessMessages() {
+        // 1000 system messages (unicast to avoid deduplication)
+        for (int i = 0; i < 1000; i++) {
+            log.addEntry(WireMessageEntry.of(i, Opcode.HEARTBEAT, 1, 2, "hb=" + i));
+        }
+
+        // 50 business messages
+        for (int i = 0; i < 50; i++) {
+            log.addEntry(WireMessageEntry.of(i, Opcode.MUTEX_REQUEST, 1, 2, "req=" + i));
+        }
+
+        // Total messages is 1050
+        assertEquals(1050, log.size());
+
+        // Default view: business only (showSystem = false) -> exactly 50
+        List<WireMessageEntry> businessOnly = log.getFilteredEntries(null, null, false, null);
+        assertEquals(50, businessOnly.size());
+
+        // Rate calculation returns reasonable non-negative numbers
+        log.updateRates();
+        assertTrue(log.getRate(Opcode.HEARTBEAT) >= 0.0);
+        assertEquals(1000, log.getTotalCount(Opcode.HEARTBEAT));
+        assertEquals(50, log.getTotalCount(Opcode.MUTEX_REQUEST));
+    }
+
+    @Test
     public void testTwoTierSeparation() {
         // Business entries
         log.addEntry(WireMessageEntry.of(1, Opcode.MUTEX_REQUEST, 1, 2, "Cell (5, 5)"));

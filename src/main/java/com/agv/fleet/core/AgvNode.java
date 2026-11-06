@@ -32,6 +32,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /**
  * Autonomous Guided Vehicle (AGV) Node wrapper.
@@ -131,6 +132,9 @@ public class AgvNode {
         );
         this.cnpEngine.setAllowSelfBidding(builder.allowSelfBidding);
         this.cnpEngine.setMapDiagonal(builder.mapDiagonal);
+        if (builder.hasPendingTaskSupplier != null) {
+            this.cnpEngine.setHasPendingTaskSupplier(builder.hasPendingTaskSupplier);
+        }
         this.peerManager.setCnpEngine(this.cnpEngine);
 
         // Subscribe to PING requests: reply with PONG echoing the 8-byte nanoTime payload
@@ -707,6 +711,12 @@ public class AgvNode {
         cnpEngine.removeAssignmentListener(listener);
     }
 
+    public void setHasPendingTaskSupplier(Supplier<Boolean> hasPendingTaskSupplier) {
+        if (cnpEngine != null) {
+            cnpEngine.setHasPendingTaskSupplier(hasPendingTaskSupplier);
+        }
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -727,6 +737,7 @@ public class AgvNode {
         private double maintenanceWeight = CnpEngine.DEFAULT_MAINTENANCE_WEIGHT;
         private boolean allowSelfBidding = false;
         private double mapDiagonal = CnpEngine.DEFAULT_MAP_DIAGONAL;
+        private Supplier<Boolean> hasPendingTaskSupplier;
 
         public Builder nodeId(long nodeId) {
             this.nodeId = nodeId;
@@ -805,6 +816,11 @@ public class AgvNode {
 
         public Builder mapDiagonal(double mapDiagonal) {
             this.mapDiagonal = mapDiagonal;
+            return this;
+        }
+
+        public Builder hasPendingTaskSupplier(Supplier<Boolean> hasPendingTaskSupplier) {
+            this.hasPendingTaskSupplier = hasPendingTaskSupplier;
             return this;
         }
 

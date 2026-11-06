@@ -49,6 +49,7 @@ public class FleetMetricsCollector {
     private final ConcurrentLinkedQueue<Double> latencySamplesMs = new ConcurrentLinkedQueue<>();
     private volatile double p50LatencyMs = 0.0;
     private volatile double p95LatencyMs = 0.0;
+    private volatile double avgLatencyMs = 0.0;
     private volatile int alivePeersCount = 0;
 
     public void recordCollision() {
@@ -138,6 +139,10 @@ public class FleetMetricsCollector {
         return p95LatencyMs;
     }
 
+    public double getAverageLatencyMs() {
+        return avgLatencyMs;
+    }
+
     public void setAlivePeersCount(int alivePeersCount) {
         this.alivePeersCount = alivePeersCount;
     }
@@ -169,6 +174,7 @@ public class FleetMetricsCollector {
             int p95Index = (int) Math.round((samples.size() - 1) * 0.95);
             p50LatencyMs = samples.get(p50Index);
             p95LatencyMs = samples.get(p95Index);
+            avgLatencyMs = samples.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
         }
     }
 
@@ -187,6 +193,7 @@ public class FleetMetricsCollector {
         latencySamplesMs.clear();
         p50LatencyMs = 0.0;
         p95LatencyMs = 0.0;
+        avgLatencyMs = 0.0;
     }
 
     public String toCsvString() {

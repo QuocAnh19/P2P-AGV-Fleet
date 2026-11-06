@@ -50,6 +50,9 @@ public class PeerSession {
         if (!isActive()) {
             throw new IllegalStateException("Cannot send message: Peer " + peerId + " channel is inactive");
         }
+        if (!channel.isWritable()) {
+            return channel.newFailedFuture(new java.io.IOException("Channel socket buffer full"));
+        }
         return channel.writeAndFlush(message);
     }
 
