@@ -41,6 +41,11 @@ public class CnpEngine {
 
     public static final long DEFAULT_AUCTION_TIMEOUT_MS = 500;
     public static final double DEFAULT_MAINTENANCE_WEIGHT = 1.0;
+    public static final double DEFAULT_MAP_DIAGONAL = 30.0;
+    public static final double DISTANCE_WEIGHT = 0.5;
+    public static final double BATTERY_WEIGHT = 0.3;
+    public static final double MAINTENANCE_WEIGHT_FACTOR = 0.2;
+    public static final double PENDING_TASK_PENALTY = 0.2;
 
     private final long thisNodeId;
     private final PeerManager peerManager;
@@ -55,6 +60,9 @@ public class CnpEngine {
 
     private final long auctionTimeoutMs;
     private final double maintenanceWeight;
+    private volatile boolean allowSelfBidding = false;
+    private volatile double mapDiagonal = DEFAULT_MAP_DIAGONAL;
+    private volatile Supplier<Boolean> hasPendingTaskSupplier;
 
     private final ConcurrentMap<String, AuctionSession> activeAuctions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, TaskAnnouncePayload> observedTasks = new ConcurrentHashMap<>();
@@ -163,6 +171,30 @@ public class CnpEngine {
         return mySubmittedBids;
     }
 
+    public boolean isAllowSelfBidding() {
+        return allowSelfBidding;
+    }
+
+    public void setAllowSelfBidding(boolean allowSelfBidding) {
+        this.allowSelfBidding = allowSelfBidding;
+    }
+
+    public double getMapDiagonal() {
+        return mapDiagonal;
+    }
+
+    public void setMapDiagonal(double mapDiagonal) {
+        this.mapDiagonal = mapDiagonal > 0 ? mapDiagonal : DEFAULT_MAP_DIAGONAL;
+    }
+
+    public Supplier<Boolean> getHasPendingTaskSupplier() {
+        return hasPendingTaskSupplier;
+    }
+
+    public void setHasPendingTaskSupplier(Supplier<Boolean> hasPendingTaskSupplier) {
+        this.hasPendingTaskSupplier = hasPendingTaskSupplier;
+    }
+
     /**
      * Initiates a new task auction by broadcasting a {@link Opcode#TASK_ANNOUNCE} frame.
      *
@@ -209,6 +241,11 @@ public class CnpEngine {
         peerManager.broadcast(announceMsg);
         notifyTaskAnnounced(task);
 
+        // Allow self-bidding if enabled
+        if (allowSelfBidding) {
+            onTaskAnnounceReceived(announceMsg);
+        }
+
         return session;
     }
 
@@ -221,8 +258,8 @@ public class CnpEngine {
         lamportClock.updateAndGet(message.getHeader().lamportTimestamp());
         TaskAnnouncePayload payload = TaskAnnouncePayload.fromBytes(message.getPayload());
 
-        // Ignore announcements issued by self
-        if (payload.announcerNodeId() == thisNodeId) {
+        // Ignore announcements issued by self if self-bidding is disabled
+        if (payload.announcerNodeId() == thisNodeId && !allowSelfBidding) {
             return;
         }
 
@@ -245,14 +282,21 @@ public class CnpEngine {
             return;
         }
 
-        // 3. Compute cost function:
-        // dist = Math.hypot(pickupX - currentX, pickupY - currentY)
-        // cost = 0.5 * dist + 0.3 * (100.0 - batteryLevel) + 0.2 * maintenanceWeight
+        // 3. Compute normalized cost function:
+        // - dist / mapDiagonal in [0, 1]
+        // - (100.0 - battery) / 100.0 in [0, 1]
+        // - maintenance history in [0, 1]
+        // cost = 0.5 * normDist + 0.3 * normBattery + 0.2 * normMaint + (hasPendingTask ? 0.2 : 0.0)
         Position2D pos = positionSupplier.get();
         double dist = Math.hypot(payload.pickupX() - pos.x(), payload.pickupY() - pos.y());
-        double cost = 0.5 * dist + 0.3 * (100.0 - battery) + 0.2 * maintenanceWeight;
+        double normDist = Math.clamp(dist / mapDiagonal, 0.0, 1.0);
+        double normBattery = Math.clamp((100.0 - battery) / 100.0, 0.0, 1.0);
+        double normMaintenance = Math.clamp(maintenanceWeight <= 1.0 ? maintenanceWeight : (maintenanceWeight / 10.0), 0.0, 1.0);
+        boolean hasPending = (hasPendingTaskSupplier != null && Boolean.TRUE.equals(hasPendingTaskSupplier.get()));
+        double pendingPenalty = hasPending ? PENDING_TASK_PENALTY : 0.0;
+        double cost = DISTANCE_WEIGHT * normDist + BATTERY_WEIGHT * normBattery + MAINTENANCE_WEIGHT_FACTOR * normMaintenance + pendingPenalty;
 
-        // 4. Transition to BIDDING and submit unicast TASK_BID to announcer
+        // 4. Transition to BIDDING and submit TASK_BID (unicast to remote peer, or dispatch local if self)
         stateConsumer.accept(AgentState.BIDDING);
         mySubmittedBids.put(payload.taskId(), payload.announcerNodeId());
 
@@ -281,8 +325,13 @@ public class CnpEngine {
                 thisNodeId, payload.taskId(), payload.announcerNodeId(),
                 String.format(Locale.US, "%.2f", dist),
                 String.format(Locale.US, "%.1f", battery),
-                String.format(Locale.US, "%.2f", cost));
-        peerManager.send(payload.announcerNodeId(), bidMsg);
+                String.format(Locale.US, "%.4f", cost));
+
+        if (payload.announcerNodeId() == thisNodeId) {
+            onTaskBidReceived(bidMsg);
+        } else {
+            peerManager.send(payload.announcerNodeId(), bidMsg);
+        }
         notifyBidSubmitted(payload.taskId(), cost, battery);
     }
 
@@ -380,6 +429,10 @@ public class CnpEngine {
                 thisNodeId, taskId, winnerNodeId,
                 String.format(Locale.US, "%.2f", bestBid.cost()));
         peerManager.broadcast(awardMsg);
+
+        if (winnerNodeId == thisNodeId) {
+            onTaskAwardReceived(awardMsg);
+        }
     }
 
     /**

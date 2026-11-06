@@ -388,6 +388,7 @@ public class ScenarioRunner {
                         .initialBattery(initialBatteries[i])
                         .initialPosition(initialPositions[i])
                         .auctionTimeoutMs(250)
+                        .mapDiagonal(14.14)
                         .build();
                 bidder.start();
                 nodes.add(bidder);
@@ -439,7 +440,7 @@ public class ScenarioRunner {
                     winnerStr = "AGV " + winnerNodeId;
 
                     // Simulate task execution and battery expenditure
-                    winnerNode.getBattery().consume(0.5);
+                    winnerNode.getBattery().consume(1.0);
                     winnerNode.setPosition(new Position2D(dx, dy));
                     winnerNode.notifyTaskComplete(taskId, announcer.getNodeId());
                     winnerNode.setAgentState(AgentState.IDLE);

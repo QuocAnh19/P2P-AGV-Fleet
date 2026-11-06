@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -232,5 +233,101 @@ class CnpAuctionTest {
         });
 
         log.info("Contractor crash fault-tolerance verified! Task re-announced.");
+    }
+
+    @Test
+    @DisplayName("5. Upgraded CNP Adaptive Auction: 5 AGVs (90/60/40/20/10%), 50 Tasks, >=3 distinct winners, <=15% never wins")
+    void testUpgradedCnpAdaptiveAuctionWith5Agvs() throws Exception {
+        log.info("--- Starting testUpgradedCnpAdaptiveAuctionWith5Agvs ---");
+
+        double[] batteries = {90.0, 60.0, 40.0, 20.0, 10.0};
+        Position2D[] positions = {
+                new Position2D(1, 1),
+                new Position2D(9, 1),
+                new Position2D(1, 9),
+                new Position2D(9, 9),
+                new Position2D(5, 5)
+        };
+
+        List<AgvNode> agvNodes = new ArrayList<>();
+        int basePort = 19400 + ThreadLocalRandom.current().nextInt(100, 500);
+
+        for (int i = 0; i < 5; i++) {
+            long nodeId = i + 1L;
+            AgvNode node = AgvNode.builder()
+                    .nodeId(nodeId)
+                    .host("127.0.0.1")
+                    .tcpPort(basePort + i)
+                    .multicastPort(multicastPort)
+                    .discoveryIntervalMs(100)
+                    .heartbeatIntervalMs(150)
+                    .heartbeatTimeoutMs(1000)
+                    .initialBattery(batteries[i])
+                    .initialPosition(positions[i])
+                    .auctionTimeoutMs(150)
+                    .mapDiagonal(14.14)
+                    .allowSelfBidding(true)
+                    .build();
+            nodes.add(node);
+            agvNodes.add(node);
+            node.start();
+        }
+
+        // Wait until all 5 nodes form full mesh (each has 4 peers)
+        await().atMost(8, TimeUnit.SECONDS).untilAsserted(() -> {
+            for (AgvNode node : agvNodes) {
+                assertThat(node.getActivePeerCount()).isEqualTo(4);
+            }
+        });
+
+        java.util.Map<Long, Integer> winCounts = new java.util.HashMap<>();
+        for (long id = 1; id <= 5; id++) winCounts.put(id, 0);
+
+        Random taskRnd = new Random(42);
+
+        for (int t = 1; t <= 50; t++) {
+            String taskId = String.format("TASK-UPGRADE-%02d", t);
+            double px = 1 + taskRnd.nextInt(9);
+            double py = 1 + taskRnd.nextInt(9);
+            double dx = 1 + taskRnd.nextInt(9);
+            double dy = 1 + taskRnd.nextInt(9);
+
+            Task task = new Task(taskId, px, py, dx, dy);
+
+            // Choose random announcer among nodes 1..4 (healthy)
+            AgvNode announcer = agvNodes.get(taskRnd.nextInt(4));
+            AuctionSession session = announcer.announceTask(task);
+
+            await().atMost(2, TimeUnit.SECONDS).untilAsserted(() -> {
+                assertThat(session.isClosed()).isTrue();
+            });
+
+            Long winnerId = task.getAssignedNodeId();
+            if (winnerId != null && winnerId > 0) {
+                winCounts.put(winnerId, winCounts.get(winnerId) + 1);
+                AgvNode winnerNode = agvNodes.get((int) (winnerId - 1));
+                // Simulate task execution
+                winnerNode.setPosition(new Position2D(dx, dy));
+                winnerNode.getBattery().consume(1.0);
+                winnerNode.notifyTaskComplete(taskId, announcer.getNodeId());
+                winnerNode.setAgentState(AgentState.IDLE);
+            }
+        }
+
+        log.info("5-AGV CNP Auction Results: {}", winCounts);
+
+        // Verification:
+        // 1. AGV 5 (10% battery <= 15%) must NEVER win any task
+        assertThat(winCounts.get(5L)).as("AGV 5 (<=15% battery) must never win any auction").isEqualTo(0);
+
+        // 2. At least 3 distinct healthy AGVs must win tasks (not monopolized by 1 vehicle)
+        long distinctWinners = winCounts.entrySet().stream()
+                .filter(e -> e.getKey() != 5L && e.getValue() > 0)
+                .count();
+        assertThat(distinctWinners).as("At least 3 distinct AGVs must win tasks").isGreaterThanOrEqualTo(3);
+
+        // 3. Healthy AGVs must win majority of tasks
+        int totalHealthyWins = winCounts.get(1L) + winCounts.get(2L) + winCounts.get(3L) + winCounts.get(4L);
+        assertThat(totalHealthyWins).isGreaterThanOrEqualTo(35);
     }
 }

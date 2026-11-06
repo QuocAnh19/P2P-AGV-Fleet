@@ -74,6 +74,8 @@ public class AgvRobot {
 
         // Wire task assignment listener
         this.node.addAssignmentListener(this::onTaskAssigned);
+        this.node.getCnpEngine().setAllowSelfBidding(true);
+        this.node.getCnpEngine().setHasPendingTaskSupplier(() -> this.currentTask != null);
     }
 
     /**

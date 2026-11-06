@@ -129,6 +129,8 @@ public class AgvNode {
                 builder.auctionTimeoutMs,
                 builder.maintenanceWeight
         );
+        this.cnpEngine.setAllowSelfBidding(builder.allowSelfBidding);
+        this.cnpEngine.setMapDiagonal(builder.mapDiagonal);
         this.peerManager.setCnpEngine(this.cnpEngine);
 
         // Subscribe to PING requests: reply with PONG echoing the 8-byte nanoTime payload
@@ -723,6 +725,8 @@ public class AgvNode {
         private Position2D initialPosition = new Position2D(0.0, 0.0);
         private long auctionTimeoutMs = CnpEngine.DEFAULT_AUCTION_TIMEOUT_MS;
         private double maintenanceWeight = CnpEngine.DEFAULT_MAINTENANCE_WEIGHT;
+        private boolean allowSelfBidding = false;
+        private double mapDiagonal = CnpEngine.DEFAULT_MAP_DIAGONAL;
 
         public Builder nodeId(long nodeId) {
             this.nodeId = nodeId;
@@ -791,6 +795,16 @@ public class AgvNode {
 
         public Builder maintenanceWeight(double maintenanceWeight) {
             this.maintenanceWeight = maintenanceWeight;
+            return this;
+        }
+
+        public Builder allowSelfBidding(boolean allowSelfBidding) {
+            this.allowSelfBidding = allowSelfBidding;
+            return this;
+        }
+
+        public Builder mapDiagonal(double mapDiagonal) {
+            this.mapDiagonal = mapDiagonal;
             return this;
         }
 
