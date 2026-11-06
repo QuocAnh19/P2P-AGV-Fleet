@@ -115,6 +115,9 @@ public class AgvRobot {
                 for (int i = 1; i < path.size(); i++) {
                     pathQueue.add(path.get(i));
                 }
+                if (node != null && node.getAgentState() != AgentState.LOW_BATTERY_CHARGING) {
+                    node.setAgentState(AgentState.MOVING);
+                }
             }
             broadcastPosition();
         } finally {
@@ -126,7 +129,9 @@ public class AgvRobot {
      * Broadcasts real-time position to peer mesh network using POSITION_UPDATE (Opcode 0x03).
      */
     public void broadcastPosition() {
-        if (node != null) {
+        if (node != null && !crashed) {
+            node.setPosition(currentGridPos.toPosition2D());
+            node.setTargetPosition(targetGridPos != null ? targetGridPos.toPosition2D() : currentGridPos.toPosition2D());
             com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
                     new com.agv.fleet.common.protocol.payload.PositionUpdatePayload(
                             currentGridPos.x(),
@@ -176,6 +181,10 @@ public class AgvRobot {
             // If currently yielding in a siding, check if corridor is clear to resume original destination
             if (yieldingToSiding) {
                 if (pathQueue.isEmpty()) {
+                    if (node != null && node.getAgentState() != AgentState.IDLE) {
+                        node.setAgentState(AgentState.IDLE);
+                        broadcastPosition();
+                    }
                     boolean entryClear = dynamicObstacles == null || !dynamicObstacles.contains(sidingEntryCell);
                     if (entryClear && originalTargetPos != null) {
                         List<GridPoint> resumePath = pathfinder.findPath(map, currentGridPos, originalTargetPos, dynamicObstacles);
@@ -190,6 +199,9 @@ public class AgvRobot {
                             pathQueue.clear();
                             for (int i = 1; i < resumePath.size(); i++) {
                                 pathQueue.add(resumePath.get(i));
+                            }
+                            if (node != null) {
+                                node.setAgentState(AgentState.MOVING);
                             }
                             broadcastPosition();
                         }
@@ -257,11 +269,12 @@ public class AgvRobot {
                 // Check dynamic collision: Don't step into cell currently occupied by another AGV
                 boolean isBlocked = dynamicObstacles != null && dynamicObstacles.contains(nextCell);
 
-                // Also check step contention: if peer is also 1 step away from nextCell, tie-break by node ID
+                // Also check step contention: if peer is also 1 step away from nextCell and actively MOVING, tie-break by node ID
                 // (Intersections are exclusively governed by Ricart-Agrawala distributed mutex)
                 if (!isBlocked && !map.isIntersection(nextCell) && node != null && node.getPeerPositionTable() != null) {
                     for (PeerPositionTable.Entry entry : node.getPeerPositionTable().getAll().values()) {
                         if (entry.nodeId() == node.getNodeId()) continue;
+                        if (entry.state() != AgentState.MOVING) continue;
                         GridPoint peerPos = entry.toGridPoint();
                         int dist = Math.abs(peerPos.x() - nextCell.x()) + Math.abs(peerPos.y() - nextCell.y());
                         if (dist == 1 && node.getNodeId() < entry.nodeId()) {
@@ -379,6 +392,10 @@ public class AgvRobot {
                 node.setPosition(currentGridPos.toPosition2D());
                 node.getBattery().consume(0.1); // 0.1% per cell traversed
 
+                if (node.getAgentState() != AgentState.WAITING_MUTEX && node.getAgentState() != AgentState.LOW_BATTERY_CHARGING) {
+                    node.setAgentState(AgentState.MOVING);
+                }
+
                 broadcastPosition();
 
                 // If moving out of an intersection, release it!
@@ -387,10 +404,6 @@ public class AgvRobot {
                             node.getNodeId(), heldIntersectionCellId);
                     node.releaseIntersection(heldIntersectionCellId);
                     heldIntersectionCellId = null;
-                }
-
-                if (node.getAgentState() != AgentState.WAITING_MUTEX && node.getAgentState() != AgentState.LOW_BATTERY_CHARGING) {
-                    node.setAgentState(AgentState.MOVING);
                 }
             } else {
                 if (yieldingToSiding) {

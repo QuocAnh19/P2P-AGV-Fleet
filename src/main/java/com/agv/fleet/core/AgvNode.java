@@ -29,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -57,6 +58,9 @@ public class AgvNode {
     private final String multicastGroup;
     private final int multicastPort;
     private final String networkInterfaceName;
+    public static final long DEFAULT_POSITION_BROADCAST_INTERVAL_MS = 250;
+    public static final long DEFAULT_POSITION_TABLE_TIMEOUT_MS = 3 * DEFAULT_POSITION_BROADCAST_INTERVAL_MS; // 750ms
+
     private final long discoveryIntervalMs;
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
@@ -70,6 +74,7 @@ public class AgvNode {
 
     private final AgvBattery battery;
     private volatile Position2D position;
+    private volatile Position2D targetPosition;
     private volatile AgentState agentState = AgentState.IDLE;
     private volatile ScheduledExecutorService cnpScheduler;
     private final CnpEngine cnpEngine;
@@ -81,6 +86,7 @@ public class AgvNode {
     private AgvTcpClient tcpClient;
     private UdpPeerDiscovery udpDiscovery;
     private HeartbeatController heartbeatController;
+    private volatile ScheduledFuture<?> positionBroadcastTask;
 
     private volatile int actualTcpPort;
     private volatile boolean running = false;
@@ -100,7 +106,7 @@ public class AgvNode {
         this.peerManager = new PeerManager(this.nodeId);
         this.mutexEngine = new RicartAgrawalaEngine(this.nodeId, this.peerManager, this.lamportClock, this::nextSequenceId);
         this.peerManager.setMutexEngine(this.mutexEngine);
-        this.peerPositionTable = new com.agv.fleet.core.agent.PeerPositionTable(this.nodeId, this.heartbeatTimeoutMs);
+        this.peerPositionTable = new com.agv.fleet.core.agent.PeerPositionTable(this.nodeId, DEFAULT_POSITION_TABLE_TIMEOUT_MS);
         this.peerManager.setPositionTable(this.peerPositionTable);
 
         this.battery = new AgvBattery(builder.initialBattery);
@@ -228,6 +234,14 @@ public class AgvNode {
         );
         this.heartbeatController.start();
 
+        // 5. Initialize and start Periodic Position Broadcast (250ms)
+        this.positionBroadcastTask = this.workerGroup.scheduleAtFixedRate(
+                this::broadcastCurrentPosition,
+                DEFAULT_POSITION_BROADCAST_INTERVAL_MS,
+                DEFAULT_POSITION_BROADCAST_INTERVAL_MS,
+                TimeUnit.MILLISECONDS
+        );
+
         this.running = true;
         log.info("AGV Node {} successfully started! Active TCP port: {}", nodeId, actualTcpPort);
     }
@@ -250,6 +264,11 @@ public class AgvNode {
         }
         running = false;
         log.warn("AGV Node {}: CRASHING abruptly (power loss simulation)...", nodeId);
+
+        if (positionBroadcastTask != null) {
+            positionBroadcastTask.cancel(false);
+            positionBroadcastTask = null;
+        }
 
         // 1. Stop Heartbeat Controller without sending any farewell
         if (heartbeatController != null) {
@@ -301,6 +320,10 @@ public class AgvNode {
      */
     public synchronized void freezeNetwork() {
         log.warn("Node {}: Freezing network (keeping sockets open, suppressing heartbeats and I/O)", nodeId);
+        if (positionBroadcastTask != null) {
+            positionBroadcastTask.cancel(false);
+            positionBroadcastTask = null;
+        }
         if (heartbeatController != null) {
             heartbeatController.stop();
         }
@@ -326,6 +349,11 @@ public class AgvNode {
         }
         running = false;
         log.info("Stopping AGV Node {}...", nodeId);
+
+        if (positionBroadcastTask != null) {
+            positionBroadcastTask.cancel(false);
+            positionBroadcastTask = null;
+        }
 
         // 1. Stop UDP Discovery
         if (udpDiscovery != null) {
@@ -467,6 +495,25 @@ public class AgvNode {
                 payload.toBytes()
         );
         peerManager.broadcast(msg);
+    }
+
+    public void broadcastCurrentPosition() {
+        if (!running) return;
+        Position2D cur = this.position != null ? this.position : new Position2D(0.0, 0.0);
+        Position2D tgt = this.targetPosition != null ? this.targetPosition : cur;
+        com.agv.fleet.common.protocol.payload.PositionUpdatePayload payload =
+                new com.agv.fleet.common.protocol.payload.PositionUpdatePayload(
+                        cur.x(), cur.y(), tgt.x(), tgt.y(), this.agentState != null ? this.agentState : AgentState.IDLE
+                );
+        broadcastPositionUpdate(payload);
+    }
+
+    public Position2D getTargetPosition() {
+        return targetPosition;
+    }
+
+    public void setTargetPosition(Position2D targetPosition) {
+        this.targetPosition = targetPosition;
     }
 
     /**

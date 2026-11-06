@@ -125,4 +125,62 @@ class PeerPositionTableTest {
         // Robot 2 must NOT step into (2, 7) because its own PeerPositionTable blocks it!
         assertThat(robot2.getCurrentGridPos()).isEqualTo(new GridPoint(2, 8));
     }
+
+    @Test
+    @DisplayName("Task B: Stationary AGV stays in PeerPositionTable for 5s via 250ms periodic broadcast, disappears on freeze")
+    void testStationaryRobotRemainsAndDisappearsOnFreeze() throws Exception {
+        int multicastPort = ThreadLocalRandom.current().nextInt(20000, 30000);
+
+        node1 = AgvNode.builder()
+                .nodeId(1L)
+                .tcpPort(19601)
+                .multicastPort(multicastPort)
+                .heartbeatIntervalMs(100)
+                .heartbeatTimeoutMs(1000)
+                .build();
+
+        node2 = AgvNode.builder()
+                .nodeId(2L)
+                .tcpPort(19602)
+                .multicastPort(multicastPort)
+                .heartbeatIntervalMs(100)
+                .heartbeatTimeoutMs(1000)
+                .build();
+
+        node1.start();
+        node2.start();
+
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(node1.getActivePeerCount()).isEqualTo(1);
+            assertThat(node2.getActivePeerCount()).isEqualTo(1);
+        });
+
+        GridMap map = new GridMap(20, 15);
+        com.agv.fleet.core.navigation.DynamicAStarPathfinder pathfinder = new com.agv.fleet.core.navigation.DynamicAStarPathfinder();
+        AgvRobot robot1 = new AgvRobot(node1, map, pathfinder, new GridPoint(3, 4));
+        AgvRobot robot2 = new AgvRobot(node2, map, pathfinder, new GridPoint(8, 8));
+
+        node1.setPosition(new Position2D(3.0, 4.0));
+        node1.setTargetPosition(new Position2D(3.0, 4.0));
+
+        // 1. Initially node2 receives node 1's position
+        await().atMost(3, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(node2.getPeerPositionTable().containsActivePeer(1L)).isTrue();
+        });
+
+        // 2. Robot 1 is stationary for 5 seconds without moving.
+        // Because timeout is 750ms, if periodic broadcast didn't fire every 250ms, it would expire!
+        // We verify that over a 5 second duration, node 1 continuously remains in node2's PeerPositionTable.
+        await().during(5, TimeUnit.SECONDS).atMost(7, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(node2.getPeerPositionTable().containsActivePeer(1L)).isTrue();
+        });
+
+        // 3. Freeze node 1's network
+        node1.freezeNetwork();
+
+        // 4. After freeze, periodic broadcast stops. Node 1 must disappear after timeout (750ms)
+        await().atMost(3, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(node2.getPeerPositionTable().containsActivePeer(1L)).isFalse();
+        });
+    }
 }

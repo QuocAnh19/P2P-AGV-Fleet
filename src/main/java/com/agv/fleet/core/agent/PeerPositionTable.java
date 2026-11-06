@@ -26,6 +26,10 @@ public class PeerPositionTable {
         public GridPoint toGridPoint() {
             return new GridPoint((int) Math.round(x), (int) Math.round(y));
         }
+
+        public GridPoint toTargetGridPoint() {
+            return new GridPoint((int) Math.round(targetX), (int) Math.round(targetY));
+        }
     }
 
     private final long thisNodeId;
@@ -49,7 +53,18 @@ public class PeerPositionTable {
     }
 
     public Entry get(long nodeId) {
-        return entries.get(nodeId);
+        Entry e = entries.get(nodeId);
+        if (e != null) {
+            if ((System.currentTimeMillis() - e.lastUpdateTimestamp()) > timeoutMs) {
+                entries.remove(nodeId, e);
+                return null;
+            }
+        }
+        return e;
+    }
+
+    public boolean containsActivePeer(long nodeId) {
+        return get(nodeId) != null;
     }
 
     public Long findPeerAt(GridPoint point) {
