@@ -16,7 +16,10 @@ import com.agv.fleet.distributed.mutex.MutexState;
 import com.agv.fleet.network.mesh.PeerSession;
 import com.agv.fleet.ui.metrics.FleetMetricsCollector;
 import com.agv.fleet.ui.panel.MetricsPanel;
+import com.agv.fleet.ui.panel.PeersPanel;
+import com.agv.fleet.ui.panel.PerNodePanel;
 import com.agv.fleet.ui.panel.ScenarioBannerOverlay;
+import com.agv.fleet.ui.panel.TimelinePanel;
 import com.agv.fleet.ui.panel.WireTrafficPanel;
 import com.agv.fleet.ui.scenario.UiScenarioController;
 import com.agv.fleet.ui.scenario.UiScenarioResult;
@@ -107,6 +110,10 @@ public class AgvFleetSimulatorApp extends Application {
     private MetricsPanel metricsPanel;
     private WireTrafficPanel wireTrafficPanel;
     private ScenarioBannerOverlay scenarioBannerOverlay;
+    private PeersPanel peersPanel;
+    private PerNodePanel perNodePanel;
+    private TimelinePanel timelinePanel;
+    private final Map<Long, GridPoint> lastReportedGridPos = new ConcurrentHashMap<>();
 
     // Simulation Speed & Physics
     private volatile double simulationSpeedMultiplier = 1.0;
@@ -159,6 +166,9 @@ public class AgvFleetSimulatorApp extends Application {
         metricsPanel = new MetricsPanel();
         wireTrafficPanel = new WireTrafficPanel(trafficLog);
         scenarioBannerOverlay = new ScenarioBannerOverlay();
+        peersPanel = new PeersPanel(() -> robots);
+        perNodePanel = new PerNodePanel(() -> robots);
+        timelinePanel = new TimelinePanel(() -> robots);
 
         // 1. Top Enterprise Control Bar
         rootPane.setTop(createTopKpiBar());
@@ -421,16 +431,19 @@ public class AgvFleetSimulatorApp extends Application {
     // =========================================================================
     private Node createRightTabbedSidebar() {
         TabPane tabPane = new TabPane();
-        tabPane.setPrefWidth(430);
+        tabPane.setPrefWidth(480);
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabPane.setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-width: 0 0 0 1px;");
 
         Tab fleetTab = new Tab("🚜 Đội xe", createFleetTabContent());
         Tab metricsTab = new Tab("📊 Chỉ số", metricsPanel);
         Tab ordersTab = new Tab("📋 Nhiệm vụ", createOrdersTabContent());
-        Tab trafficTab = new Tab("📡 Nhật ký Wire", wireTrafficPanel);
+        Tab trafficTab = new Tab("📡 Wire", wireTrafficPanel);
+        Tab peersTab = new Tab("🌐 Peers", peersPanel);
+        Tab perNodeTab = new Tab("🔍 Per-Node", perNodePanel);
+        Tab timelineTab = new Tab("⏱ Timeline", timelinePanel);
 
-        tabPane.getTabs().addAll(fleetTab, metricsTab, ordersTab, trafficTab);
+        tabPane.getTabs().addAll(fleetTab, metricsTab, ordersTab, trafficTab, peersTab, perNodeTab, timelineTab);
         return tabPane;
     }
 
@@ -855,6 +868,9 @@ public class AgvFleetSimulatorApp extends Application {
         updateDashboardTelemetry();
         metricsPanel.update(metricsCollector);
         wireTrafficPanel.refreshView();
+        if (peersPanel != null) peersPanel.refresh();
+        if (perNodePanel != null) perNodePanel.refresh();
+        if (timelinePanel != null) timelinePanel.refresh();
     }
 
     private void physicsAndLogicTick() {
@@ -864,6 +880,12 @@ public class AgvFleetSimulatorApp extends Application {
             // 1. Update Physics for each robot
             for (AgvRobot robot : robots) {
                 robot.updatePhysicsAndLogic(null);
+                GridPoint cur = robot.getCurrentGridPos();
+                GridPoint prev = lastReportedGridPos.put(robot.getNodeId(), cur);
+                if (prev != null && !prev.equals(cur)) {
+                    if (perNodePanel != null) perNodePanel.recordEvent(robot.getNodeId(), "Đổi ô sang " + cur);
+                    if (timelinePanel != null) timelinePanel.recordEvent(robot.getNodeId(), TimelinePanel.EventCategory.MOVE_STEP, "Đổi ô tới " + cur);
+                }
             }
 
             // 2. Ground-Truth Collision Detection
@@ -1287,6 +1309,8 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onMutexRequested(String cellId, long requestTimestamp) {
                 mutexRequestTimestamps.put(nodeId + ":" + cellId, System.currentTimeMillis());
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Yêu cầu Mutex " + cellId + " (L=" + requestTimestamp + ")");
+                if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_REQ, "Yêu cầu Mutex " + cellId);
             }
 
             @Override
@@ -1296,6 +1320,14 @@ public class AgvFleetSimulatorApp extends Application {
                     long elapsed = System.currentTimeMillis() - startMs;
                     metricsCollector.recordMutexWait(elapsed);
                 }
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Đã chiếm giữ Mutex " + cellId);
+                if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_OK, "Chiếm Mutex " + cellId);
+            }
+
+            @Override
+            public void onMutexReleased(String cellId) {
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Giải phóng Mutex " + cellId);
+                if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_OK, "Nhả Mutex " + cellId);
             }
         });
 
@@ -1303,17 +1335,21 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onTaskAnnounced(Task task) {
                 metricsCollector.recordAuctionAnnounced();
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Phát thầu nhiệm vụ " + task.getTaskId());
             }
 
             @Override
             public void onBidSubmitted(String taskId, double cost, double battery) {
                 metricsCollector.recordBidSubmitted();
                 cnpVisualBids.put(nodeId, cost);
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, String.format(Locale.US, "Nộp thầu %s (cost=%.2f, pin=%.0f%%)", taskId, cost, battery));
             }
 
             @Override
             public void onTaskWon(Task task) {
                 cnpVisualWinnerId = nodeId;
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Trúng thầu nhiệm vụ " + task.getTaskId());
+                if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.TASK_WON, "Trúng thầu " + task.getTaskId());
                 if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S2_ADAPTIVE_AUCTION) {
                     Platform.runLater(() -> {
                         boolean agv5Bid = cnpVisualBids.containsKey(5L);
@@ -1327,6 +1363,8 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onTaskCompleted(String taskId, long contractorNodeId) {
                 metricsCollector.recordTaskCompleted();
+                if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Hoàn thành nhiệm vụ " + taskId);
+                if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.TASK_DONE, "Xong " + taskId);
             }
         });
 
@@ -1386,8 +1424,19 @@ public class AgvFleetSimulatorApp extends Application {
             }
         } catch (Exception ignored) {}
 
-        WireMessageEntry entry = WireMessageEntry.of(lamport, op, senderId, receiverId, detail);
+        int peerCount = (robots != null) ? (int) robots.stream().filter(r -> !r.isCrashed() && r.getNodeId() != senderId).count() : 4;
+        WireMessageEntry entry;
+        if (receiverId < 0 || (msg.getHeader() != null && msg.getHeader().senderNodeId() > 0 && receiverId == -1)) {
+            entry = WireMessageEntry.ofBroadcast(lamport, op, senderId, peerCount, detail, msg);
+        } else {
+            entry = WireMessageEntry.of(lamport, op, senderId, receiverId, detail, msg);
+        }
         trafficLog.addEntry(entry);
+
+        if (perNodePanel != null) {
+            perNodePanel.recordPacketIn(receiverId, op);
+            perNodePanel.recordPacketOut(senderId, op);
+        }
     }
 
     private void updateDashboardTelemetry() {
