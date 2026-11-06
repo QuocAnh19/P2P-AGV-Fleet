@@ -21,9 +21,12 @@ import com.agv.fleet.ui.panel.WireTrafficPanel;
 import com.agv.fleet.ui.scenario.UiScenarioController;
 import com.agv.fleet.ui.scenario.UiScenarioResult;
 import com.agv.fleet.ui.scenario.UiScenarioType;
+import com.agv.fleet.ui.simulation.PhysicsLoopController;
 import com.agv.fleet.ui.traffic.WireMessageEntry;
 import com.agv.fleet.ui.traffic.WireTrafficLog;
 import javafx.animation.AnimationTimer;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -44,6 +47,7 @@ import javafx.scene.text.Text;
 import javafx.stage.FileChooser;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,8 +102,9 @@ public class AgvFleetSimulatorApp extends Application {
     // Simulation Speed & Physics
     private volatile double simulationSpeedMultiplier = 1.0;
     private volatile boolean fleetPaused = false;
-    private ScheduledExecutorService simExecutor;
+    private PhysicsLoopController physicsController;
     private AnimationTimer renderLoop;
+    private Timeline uiRefreshTimeline;
 
     // Visual Auction & Mutex Animation State
     private volatile Long cnpVisualAnnouncerId = null;
@@ -240,9 +245,11 @@ public class AgvFleetSimulatorApp extends Application {
         speedValLabel.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 11px; -fx-font-weight: bold; -fx-min-width: 32px;");
 
         speedSlider.valueProperty().addListener((obs, oldV, newV) -> {
-            simulationSpeedMultiplier = Math.round(newV.doubleValue() * 4.0) / 4.0;
-            speedValLabel.setText(String.format(Locale.US, "%.2fx", simulationSpeedMultiplier));
-            restartPhysicsLoop();
+            if (physicsController != null) {
+                physicsController.updateSpeed(newV.doubleValue());
+                simulationSpeedMultiplier = physicsController.getCurrentDiscreteSpeed();
+                speedValLabel.setText(String.format(Locale.US, "%.2fx", simulationSpeedMultiplier));
+            }
         });
 
         speedControls.getChildren().addAll(speedLabel, speedSlider, speedValLabel);
@@ -561,6 +568,9 @@ public class AgvFleetSimulatorApp extends Application {
 
     private void toggleFleetPause() {
         fleetPaused = !fleetPaused;
+        if (physicsController != null) {
+            physicsController.setPaused(fleetPaused);
+        }
         for (AgvRobot robot : robots) {
             robot.setPaused(fleetPaused);
         }
@@ -783,16 +793,14 @@ public class AgvFleetSimulatorApp extends Application {
     }
 
     // =========================================================================
-    // 9. SIMULATION LOOPS (PHYSICS TICK 20Hz, RENDER 60FPS)
+    // 9. SIMULATION LOOPS (3 INDEPENDENT RHYTHMS)
+    // (a) Logic xe 4 Hz (250ms at 1x) managed by PhysicsLoopController
+    // (b) Render Canvas 60 FPS via AnimationTimer
+    // (c) UI Refresh 5 Hz (200ms) via JavaFX Timeline (runs even when paused)
     // =========================================================================
     private void startSimulationLoops() {
-        simExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "fms-physics-sim");
-            t.setDaemon(true);
-            return t;
-        });
-
-        restartPhysicsLoop();
+        physicsController = new PhysicsLoopController(this::physicsAndLogicTick);
+        physicsController.restartPhysicsLoop();
 
         renderLoop = new AnimationTimer() {
             @Override
@@ -801,13 +809,37 @@ public class AgvFleetSimulatorApp extends Application {
             }
         };
         renderLoop.start();
+
+        uiRefreshTimeline = new Timeline(new KeyFrame(Duration.millis(200), e -> onUiRefreshTick()));
+        uiRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
+        uiRefreshTimeline.play();
     }
 
     private void restartPhysicsLoop() {
-        if (simExecutor == null || simExecutor.isShutdown()) return;
+        if (physicsController != null) {
+            physicsController.restartPhysicsLoop();
+        }
+    }
 
-        long periodMs = Math.max(25, (long) (50 / simulationSpeedMultiplier));
-        simExecutor.scheduleAtFixedRate(this::physicsAndLogicTick, 200, periodMs, TimeUnit.MILLISECONDS);
+    private void onUiRefreshTick() {
+        metricsCollector.setAlivePeersCount((int) robots.stream().filter(r -> !r.isCrashed()).count());
+        metricsCollector.tickPeriodicSample();
+
+        if (robots.size() >= 2) {
+            AgvRobot r1 = robots.get(0);
+            AgvRobot r2 = robots.get(1);
+            if (!r1.isCrashed() && !r2.isCrashed()) {
+                r1.getNode().ping(r2.getNodeId()).whenComplete((rttNanos, err) -> {
+                    if (err == null && rttNanos != null) {
+                        metricsCollector.recordLatencySample(rttNanos / 1_000_000.0);
+                    }
+                });
+            }
+        }
+
+        updateDashboardTelemetry();
+        metricsPanel.update(metricsCollector);
+        wireTrafficPanel.refreshView();
     }
 
     private void physicsAndLogicTick() {
@@ -853,31 +885,6 @@ public class AgvFleetSimulatorApp extends Application {
                         scenarioBannerOverlay.showVerdict(res);
                     });
                 }
-            }
-
-            // 4. Periodic 1-second sample tick & UI refresh
-            long now = System.currentTimeMillis();
-            if (now % 1000 < 60) {
-                metricsCollector.setAlivePeersCount((int) robots.stream().filter(r -> !r.isCrashed()).count());
-                metricsCollector.tickPeriodicSample();
-
-                if (robots.size() >= 2) {
-                    AgvRobot r1 = robots.get(0);
-                    AgvRobot r2 = robots.get(1);
-                    if (!r1.isCrashed() && !r2.isCrashed()) {
-                        r1.getNode().ping(r2.getNodeId()).whenComplete((rttNanos, err) -> {
-                            if (err == null && rttNanos != null) {
-                                metricsCollector.recordLatencySample(rttNanos / 1_000_000.0);
-                            }
-                        });
-                    }
-                }
-
-                Platform.runLater(() -> {
-                    updateDashboardTelemetry();
-                    metricsPanel.update(metricsCollector);
-                    wireTrafficPanel.refreshView();
-                });
             }
         } catch (Exception e) {
             log.error("Error in physics simulation tick", e);
@@ -1680,7 +1687,8 @@ public class AgvFleetSimulatorApp extends Application {
     private void shutdown() {
         log.info("Shutting down AGV Fleet Simulator...");
         if (renderLoop != null) renderLoop.stop();
-        if (simExecutor != null) simExecutor.shutdownNow();
+        if (uiRefreshTimeline != null) uiRefreshTimeline.stop();
+        if (physicsController != null) physicsController.stop();
         stopAndClearFleet();
         log.info("AGV Fleet Simulator shutdown cleanly.");
     }
