@@ -32,9 +32,15 @@ public class PeerPositionTable {
         }
     }
 
+    public static final long DEFAULT_TIMEOUT_MS = 750L; // 3 * 250ms
+
     private final long thisNodeId;
     private final long timeoutMs;
     private final ConcurrentMap<Long, Entry> entries = new ConcurrentHashMap<>();
+
+    public PeerPositionTable(long thisNodeId) {
+        this(thisNodeId, DEFAULT_TIMEOUT_MS);
+    }
 
     public PeerPositionTable(long thisNodeId, long timeoutMs) {
         this.thisNodeId = thisNodeId;

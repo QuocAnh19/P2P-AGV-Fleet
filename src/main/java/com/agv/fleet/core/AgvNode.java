@@ -107,7 +107,8 @@ public class AgvNode {
         this.peerManager = new PeerManager(this.nodeId);
         this.mutexEngine = new RicartAgrawalaEngine(this.nodeId, this.peerManager, this.lamportClock, this::nextSequenceId);
         this.peerManager.setMutexEngine(this.mutexEngine);
-        this.peerPositionTable = new com.agv.fleet.core.agent.PeerPositionTable(this.nodeId, DEFAULT_POSITION_TABLE_TIMEOUT_MS);
+        long positionTableTimeout = Math.max(DEFAULT_POSITION_TABLE_TIMEOUT_MS, this.heartbeatTimeoutMs);
+        this.peerPositionTable = new com.agv.fleet.core.agent.PeerPositionTable(this.nodeId, positionTableTimeout);
         this.peerManager.setPositionTable(this.peerPositionTable);
 
         this.battery = new AgvBattery(builder.initialBattery);

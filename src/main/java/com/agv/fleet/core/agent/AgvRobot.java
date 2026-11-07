@@ -241,6 +241,7 @@ public class AgvRobot {
             if (map.isChargingStation(currentGridPos)) {
                 // In charging dock: recharge battery
                 node.getBattery().setLevel(Math.min(100.0, node.getBattery().getLevel() + 2.5));
+                node.setPosition(currentGridPos.toPosition2D());
                 if (node.getBattery().getLevel() >= 95.0 && node.getAgentState() == AgentState.LOW_BATTERY_CHARGING) {
                     node.setAgentState(AgentState.IDLE);
                 }
@@ -260,6 +261,7 @@ public class AgvRobot {
                 } else {
                     // Still waiting for replies from peer mesh
                     node.setAgentState(AgentState.WAITING_MUTEX);
+                    node.setPosition(currentGridPos.toPosition2D());
                     return; // Stopped waiting
                 }
             }
