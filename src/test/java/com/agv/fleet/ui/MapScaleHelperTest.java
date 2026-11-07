@@ -54,4 +54,22 @@ class MapScaleHelperTest {
         assertThat(MapScaleHelper.mouseToGridX(100.0, cellSize, 10.0)).isEqualTo(3); // (100 - 10) / 30 = 3
         assertThat(MapScaleHelper.mouseToGridY(100.0, cellSize, 10.0)).isEqualTo(3);
     }
+
+    @Test
+    @DisplayName("Window layout responsiveness: min window bounds 1100x650 at 62% map split yields valid square cells")
+    void testWindowSplitScaling() {
+        // At 1100 width: 62% for map = 682 px, height = 650 px (minus top/bottom bars ~120px = 530px)
+        double freeW = 682.0;
+        double freeH = 530.0;
+        double cellSize = MapScaleHelper.calculateCellSize(freeW, freeH);
+
+        // 682 / 24 = 28.41, 530 / 16 = 33.12 -> cellSize = 28.41
+        assertThat(cellSize).isBetween(28.0, 29.0);
+
+        // Grid bounds
+        double canvasW = MapScaleHelper.GRID_COLS * cellSize;
+        double canvasH = MapScaleHelper.GRID_ROWS * cellSize;
+        assertThat(canvasW).isLessThanOrEqualTo(freeW);
+        assertThat(canvasH).isLessThanOrEqualTo(freeH);
+    }
 }
