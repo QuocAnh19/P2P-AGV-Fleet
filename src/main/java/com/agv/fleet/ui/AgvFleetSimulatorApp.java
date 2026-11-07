@@ -212,6 +212,8 @@ public class AgvFleetSimulatorApp extends Application {
     // Movement History Trails & Crash Animation Timestamps
     private final Map<Long, Deque<Position2D>> robotTrails = new ConcurrentHashMap<>();
     private final Map<Long, Long> crashTimestamps = new ConcurrentHashMap<>();
+    private final Map<Long, Long> robotIdleSinceMs = new ConcurrentHashMap<>();
+    private volatile boolean patrolEnabled = true;
 
     @Override
     public void start(Stage primaryStage) {
@@ -441,10 +443,17 @@ public class AgvFleetSimulatorApp extends Application {
         feedToggleItem.setSelected(true);
         feedToggleItem.setOnAction(e -> liveFeedEnabled = feedToggleItem.isSelected());
 
+        CheckMenuItem patrolToggleItem = new CheckMenuItem("🛡 Tuần tra tự động khi rảnh > 8s");
+        patrolToggleItem.setSelected(patrolEnabled);
+        patrolToggleItem.setOnAction(e -> {
+            patrolEnabled = patrolToggleItem.isSelected();
+            addLiveFeed("Tuần tra: " + (patrolEnabled ? "BẬT" : "TẮT"), Color.web("#6EE7B7"));
+        });
+
         MenuItem resetFleetItem = new MenuItem("🔄 Đặt lại đội xe & bản đồ [Phím R]");
         resetFleetItem.setOnAction(e -> resetFleetToDefault());
 
-        moreMenu.getItems().addAll(addAgvItem, randomTaskItem, new SeparatorMenuItem(), feedToggleItem, new SeparatorMenuItem(), resetFleetItem);
+        moreMenu.getItems().addAll(addAgvItem, randomTaskItem, new SeparatorMenuItem(), feedToggleItem, patrolToggleItem, new SeparatorMenuItem(), resetFleetItem);
 
         titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, controlGroup, autoDemoBtn, presentationModeBtn, exportReportBtn, moreMenu);
 
@@ -1236,6 +1245,31 @@ public class AgvFleetSimulatorApp extends Application {
                 } else {
                     crashTimestamps.remove(robot.getNodeId());
                 }
+
+                // Patrol Mode check: if IDLE > 8 seconds, dispatch to empty cell at Manhattan dist >= 4
+                if (!robot.isCrashed() && robot.getState() == AgentState.IDLE
+                        && robot.getRemainingPath().isEmpty() && robot.getCurrentTask() == null) {
+                    long now = System.currentTimeMillis();
+                    long idleSince = robotIdleSinceMs.computeIfAbsent(robot.getNodeId(), k -> now);
+                    if (patrolEnabled && (now - idleSince) > 8000L) {
+                        List<GridPoint> emptyPoints = map.getWalkableEmptyPoints();
+                        List<GridPoint> candidates = emptyPoints.stream()
+                                .filter(p -> p.manhattanDistance(cur) >= 4)
+                                .toList();
+                        if (!candidates.isEmpty()) {
+                            GridPoint dest = candidates.get(seededRandom.nextInt(candidates.size()));
+                            robot.setDestination(dest);
+                            robotIdleSinceMs.remove(robot.getNodeId());
+                            if (liveFeedEnabled) {
+                                addLiveFeed("AGV #" + robot.getNodeId() + " tuần tra -> (" + dest.x() + "," + dest.y() + ")", Color.web("#93C5FD"));
+                            }
+                        } else {
+                            robotIdleSinceMs.put(robot.getNodeId(), now);
+                        }
+                    }
+                } else {
+                    robotIdleSinceMs.remove(robot.getNodeId());
+                }
             }
 
             // 2. Ground-Truth Collision Detection
@@ -1511,7 +1545,7 @@ public class AgvFleetSimulatorApp extends Application {
             }
         }
 
-        // 5. Draw Waypoints Future Path
+        // 5. Draw Waypoints Future Path (faint dashed line)
         for (AgvRobot robot : robots) {
             if (robot.isCrashed()) continue;
             List<GridPoint> path = robot.getRemainingPath();
@@ -1519,6 +1553,7 @@ public class AgvFleetSimulatorApp extends Application {
                 Color trailColor = robot == selectedRobot ? Color.web("#F59E0B", 0.8) : Color.web("#38BDF8", 0.35);
                 gc.setStroke(trailColor);
                 gc.setLineWidth(robot == selectedRobot ? 2.5 : 1.5);
+                gc.setLineDashes(4.0, 4.0);
 
                 double prevX = robot.getRenderX() * currentCellSize + currentCellSize / 2;
                 double prevY = robot.getRenderY() * currentCellSize + currentCellSize / 2;
@@ -1529,6 +1564,7 @@ public class AgvFleetSimulatorApp extends Application {
                     prevX = wx;
                     prevY = wy;
                 }
+                gc.setLineDashes(null);
             }
         }
 
@@ -1567,12 +1603,12 @@ public class AgvFleetSimulatorApp extends Application {
             double radius = currentCellSize * 0.40; // 40% cell size!
 
             Color statusColor = switch (robot.getState()) {
-                case IDLE -> Color.web("#3B82F6");
-                case BIDDING -> Color.web("#8B5CF6");
-                case MOVING, BUSY -> Color.web("#06B6D4");
-                case WAITING_MUTEX -> Color.web("#F59E0B");
-                case LOW_BATTERY_CHARGING -> Color.web("#10B981");
-                case CRASHED -> Color.web("#EF4444");
+                case IDLE -> Color.web("#3B82F6"); // blue
+                case BIDDING -> Color.web("#8B5CF6"); // purple
+                case MOVING, BUSY -> Color.web("#10B981"); // green
+                case WAITING_MUTEX -> Color.web("#F59E0B"); // orange
+                case LOW_BATTERY_CHARGING -> Color.web("#EAB308"); // yellow
+                case CRASHED -> Color.web("#EF4444"); // red
             };
 
             if (robot == selectedRobot) {
