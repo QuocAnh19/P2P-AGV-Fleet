@@ -33,6 +33,7 @@ import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
@@ -81,7 +82,7 @@ public class AgvFleetSimulatorApp extends Application {
     private static final Logger log = LoggerFactory.getLogger(AgvFleetSimulatorApp.class);
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
 
-    private static final double CELL_SIZE = 28.0;
+    private double currentCellSize = MapScaleHelper.DEFAULT_CELL_SIZE;
     private static final int MULTICAST_PORT = 19876;
 
     private final GridMap map = GridMap.createDefaultWarehouseMap();
@@ -184,6 +185,32 @@ public class AgvFleetSimulatorApp extends Application {
     private Label speedValLabel;
     private boolean presentationModeActive = false;
 
+    // SplitPane & Layout Nodes
+    private SplitPane mainSplitPane;
+    private Node topContainerNode;
+    private HBox topKpiRow;
+    private Node enterpriseControlBar;
+
+    // Scenario Status Bar (On Top of Canvas)
+    private HBox scenarioStatusBar;
+    private Label scenarioStatusTitle;
+    private Label step1Pill;
+    private Label step2Pill;
+    private Label step3Pill;
+    private Label scenarioTimerLabel;
+    private Button stopScenarioBtn;
+    private Button replayScenarioBtn;
+    private UiScenarioType lastRunScenarioType = UiScenarioType.S1_HEAD_ON_INTERSECTION;
+
+    // Live Event Feed (Bottom-Left Canvas)
+    public record LiveFeedEntry(String text, long timestampMs, Color color) {}
+    private final List<LiveFeedEntry> liveFeed = new CopyOnWriteArrayList<>();
+    private volatile boolean liveFeedEnabled = true;
+
+    // Movement History Trails & Crash Animation Timestamps
+    private final Map<Long, Deque<Position2D>> robotTrails = new ConcurrentHashMap<>();
+    private final Map<Long, Long> crashTimestamps = new ConcurrentHashMap<>();
+
     @Override
     public void start(Stage primaryStage) {
         this.primaryStage = primaryStage;
@@ -200,18 +227,66 @@ public class AgvFleetSimulatorApp extends Application {
         perNodePanel = new PerNodePanel(() -> robots);
         timelinePanel = new TimelinePanel(() -> robots);
 
+        // Wire scenario controller listener to update stepper and live feed
+        scenarioController.addListener(new com.agv.fleet.ui.scenario.UiScenarioListener() {
+            @Override
+            public void onScenarioStarted(UiScenarioType type, String banner) {
+                lastRunScenarioType = type;
+                Platform.runLater(() -> {
+                    scenarioStatusTitle.setText("🎬 " + type.getTitle().toUpperCase());
+                    updateStepper(1, type == UiScenarioType.S3_CRASH_RECOVERY ? 2 : 3);
+                    scenarioStatusBar.setVisible(true);
+                    scenarioStatusBar.setManaged(true);
+                    addLiveFeed("Bắt đầu: " + type.getTitle(), Color.web("#38BDF8"));
+                });
+            }
+
+            @Override
+            public void onStepUpdated(int step, int totalSteps, String banner) {
+                Platform.runLater(() -> {
+                    updateStepper(step, totalSteps);
+                    addLiveFeed(banner, Color.web("#FDE047"));
+                });
+            }
+
+            @Override
+            public void onScenarioCompleted(UiScenarioResult result) {
+                Platform.runLater(() -> {
+                    updateStepper(scenarioController.getTotalSteps(), scenarioController.getTotalSteps());
+                    if (result.passed()) {
+                        addLiveFeed("Kịch bản thành công (PASS)!", Color.web("#10B981"));
+                    } else {
+                        addLiveFeed("Kịch bản thất bại (FAIL)!", Color.web("#EF4444"));
+                    }
+                });
+            }
+        });
+
         // 1. Top Enterprise Control Bar
-        rootPane.setTop(createTopKpiBar());
+        topContainerNode = createTopKpiBar();
+        rootPane.setTop(topContainerNode);
 
-        // 2. Center: Interactive Map & Canvas with Banner Overlay
-        rootPane.setCenter(createCenterMapArea());
+        // 2. Center: Interactive Map & Canvas
+        Node centerMapArea = createCenterMapArea();
 
-        // 3. Right: Tabbed Operations Panel
+        // 3. Right: Tabbed Operations Panel (min width 380px)
         rightSidebarNode = createRightTabbedSidebar();
-        rootPane.setRight(rightSidebarNode);
+        rightSidebarNode.setMinWidth(380);
 
-        // 4. Bottom: Enterprise Actions Bar
-        rootPane.setBottom(createEnterpriseControlBar());
+        // 4. Horizontal SplitPane Layout (Requirement 4: 38% right panel, draggable divider)
+        mainSplitPane = new SplitPane();
+        mainSplitPane.setOrientation(Orientation.HORIZONTAL);
+        mainSplitPane.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
+        mainSplitPane.getItems().addAll(centerMapArea, rightSidebarNode);
+        mainSplitPane.setDividerPositions(0.62); // 38% right panel (1 - 0.62)
+        SplitPane.setResizableWithParent(centerMapArea, true);
+        SplitPane.setResizableWithParent(rightSidebarNode, true);
+
+        rootPane.setCenter(mainSplitPane);
+
+        // 5. Bottom: Enterprise Actions Bar
+        enterpriseControlBar = createEnterpriseControlBar();
+        rootPane.setBottom(enterpriseControlBar);
 
         Scene scene = new Scene(rootPane);
 
@@ -258,10 +333,10 @@ public class AgvFleetSimulatorApp extends Application {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        // Menu "Scenarios" with 3 Items
-        MenuButton scenariosMenu = new MenuButton("🎬 Kịch bản (Scenarios)");
+        // 1. Group: Kịch bản (Scenarios)
+        MenuButton scenariosMenu = new MenuButton("🎬 Kịch bản ▾");
         scenariosMenu.setStyle("-fx-background-color: #2563EB; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-cursor: hand; -fx-background-radius: 5px;");
-        Tooltip.install(scenariosMenu, new Tooltip("Chọn và chạy các kịch bản kiểm thử thuật toán phân tán chuyên sâu"));
+        Tooltip.install(scenariosMenu, new Tooltip("Chọn và chạy kịch bản kiểm thử phân tán chuyên sâu"));
 
         MenuItem s1Item = new MenuItem("S1: Đối đầu ngã tư (2/4/8 xe) [Phím 1]");
         s1Item.setOnAction(e -> runScenarioS1(2));
@@ -274,20 +349,32 @@ public class AgvFleetSimulatorApp extends Application {
 
         scenariosMenu.getItems().addAll(s1Item, s2Item, s3Item);
 
-        // Simulation Speed Slider (0.25x - 4.0x)
-        HBox speedControls = new HBox(6);
-        speedControls.setAlignment(Pos.CENTER);
+        // 2. Group: Điều khiển [Tạm dừng, Bước, Tốc độ]
+        HBox controlGroup = new HBox(6);
+        controlGroup.setAlignment(Pos.CENTER_LEFT);
+        controlGroup.setPadding(new Insets(2, 8, 2, 8));
+        controlGroup.setStyle("-fx-background-color: #1E293B; -fx-border-color: #334155; -fx-border-width: 1px; -fx-border-radius: 5px; -fx-background-radius: 5px;");
+
+        pauseFleetBtn = new Button("⏸ Tạm dừng");
+        pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        Tooltip.install(pauseFleetBtn, new Tooltip("Tạm dừng hoặc tiếp tục di chuyển toàn bộ đội xe AGV [Phím Space]"));
+        pauseFleetBtn.setOnAction(e -> toggleFleetPause());
+
+        Button stepModeBtn = new Button("⏭ Bước");
+        stepModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        Tooltip.install(stepModeBtn, new Tooltip("Khi Pause, bấm để chạy đúng 1 tick mô phỏng (250ms) rồi dừng lại [Phím S/N]"));
+        stepModeBtn.setOnAction(e -> executeSingleStep());
 
         Label speedLabel = new Label("Tốc độ:");
         speedLabel.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 11px;");
 
         speedSlider = new Slider(0.25, 4.0, 1.0);
-        speedSlider.setPrefWidth(90);
+        speedSlider.setPrefWidth(80);
         speedSlider.setStyle("-fx-cursor: hand;");
         Tooltip.install(speedSlider, new Tooltip("Điều chỉnh tốc độ mô phỏng từ 0.25x đến 4.0x"));
 
         speedValLabel = new Label("1.0x");
-        speedValLabel.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 11px; -fx-font-weight: bold; -fx-min-width: 32px;");
+        speedValLabel.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 11px; -fx-font-weight: bold; -fx-min-width: 30px;");
 
         speedSlider.valueProperty().addListener((obs, oldV, newV) -> {
             if (physicsController != null) {
@@ -297,39 +384,47 @@ public class AgvFleetSimulatorApp extends Application {
             }
         });
 
-        speedControls.getChildren().addAll(speedLabel, speedSlider, speedValLabel);
+        controlGroup.getChildren().addAll(pauseFleetBtn, stepModeBtn, speedLabel, speedSlider, speedValLabel);
 
-        // Pause Fleet Button
-        pauseFleetBtn = new Button("⏸ Tạm dừng");
-        pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-        Tooltip.install(pauseFleetBtn, new Tooltip("Tạm dừng hoặc tiếp tục toàn bộ đội xe AGV [Phím Space]"));
-        pauseFleetBtn.setOnAction(e -> toggleFleetPause());
-
-        // Step Mode Button
-        Button stepModeBtn = new Button("⏭ Bước (Step)");
-        stepModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-        Tooltip.install(stepModeBtn, new Tooltip("Khi Pause, bấm để chạy đúng 1 tick mô phỏng (250ms) rồi dừng lại [Phím S]"));
-        stepModeBtn.setOnAction(e -> executeSingleStep());
-
-        // Auto Demo Button
-        autoDemoBtn = new ToggleButton("▶ Bắt đầu demo (Auto)");
-        autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
+        // 3. Group: Demo tự động
+        autoDemoBtn = new ToggleButton("▶ Demo tự động");
+        autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
         Tooltip.install(autoDemoBtn, new Tooltip("Tự động sinh nhiệm vụ mỗi 3-5s với người phát thầu ngẫu nhiên trong các xe sống"));
         autoDemoBtn.setOnAction(e -> toggleAutoDemo());
 
-        // Presentation Mode Button
+        // 4. Group: Trình chiếu
         presentationModeBtn = new Button("🖥 Trình chiếu");
-        presentationModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-        Tooltip.install(presentationModeBtn, new Tooltip("Bật/tắt chế độ thuyết trình (phóng to canvas, ẩn sidebar) [Phím P]"));
+        presentationModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(presentationModeBtn, new Tooltip("Chế độ trình chiếu phóng to bản đồ lên ~70% màn hình [Phím P]"));
         presentationModeBtn.setOnAction(e -> togglePresentationMode());
 
-        // Export Report Button
+        // 5. Group: Xuất báo cáo
         Button exportReportBtn = new Button("📑 Xuất báo cáo");
-        exportReportBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-        Tooltip.install(exportReportBtn, new Tooltip("Xuất dữ liệu hiệu năng Metrics và Wire Traffic Log ra file CSV"));
+        exportReportBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(exportReportBtn, new Tooltip("Xuất số liệu hiệu năng và nhật ký Wire ra file CSV"));
         exportReportBtn.setOnAction(e -> exportFullReport());
 
-        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, speedControls, pauseFleetBtn, stepModeBtn, autoDemoBtn, presentationModeBtn, exportReportBtn);
+        // 6. Group: Menu "⋯" Overflow
+        MenuButton moreMenu = new MenuButton("⋯");
+        moreMenu.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 8 4 8; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(moreMenu, new Tooltip("Tùy chọn phụ và tiện ích"));
+
+        MenuItem addAgvItem = new MenuItem("➕ Thêm xe AGV...");
+        addAgvItem.setOnAction(e -> showAgvConfigDialog());
+
+        MenuItem randomTaskItem = new MenuItem("📦 Phát thầu nhiệm vụ ngẫu nhiên");
+        randomTaskItem.setOnAction(e -> triggerRandomTaskAnnouncement());
+
+        CheckMenuItem feedToggleItem = new CheckMenuItem("🔔 Hiện Live Event Feed");
+        feedToggleItem.setSelected(true);
+        feedToggleItem.setOnAction(e -> liveFeedEnabled = feedToggleItem.isSelected());
+
+        MenuItem resetFleetItem = new MenuItem("🔄 Đặt lại đội xe & bản đồ [Phím R]");
+        resetFleetItem.setOnAction(e -> resetFleetToDefault());
+
+        moreMenu.getItems().addAll(addAgvItem, randomTaskItem, new SeparatorMenuItem(), feedToggleItem, new SeparatorMenuItem(), resetFleetItem);
+
+        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, controlGroup, autoDemoBtn, presentationModeBtn, exportReportBtn, moreMenu);
 
         // KPI Summary Badges Row
         HBox kpiRow = new HBox(8);
@@ -349,6 +444,8 @@ public class AgvFleetSimulatorApp extends Application {
         kpiRow.getChildren().addAll(activeNodesLabel, activeTasksLabel, completedTasksLabel, activeMutexLabel, maxLamportLabel, fleetHealthLabel, kpiSpacer);
 
         topContainer.getChildren().addAll(titleRow, kpiRow);
+        topKpiRow = kpiRow;
+        topContainerNode = topContainer;
         return topContainer;
     }
 
@@ -365,7 +462,7 @@ public class AgvFleetSimulatorApp extends Application {
     // 2. CENTER INTERACTIVE MAP & SCENARIO BANNER OVERLAY
     // =========================================================================
     private Node createCenterMapArea() {
-        canvas = new Canvas(map.getWidth() * CELL_SIZE, map.getHeight() * CELL_SIZE);
+        canvas = new Canvas(map.getWidth() * currentCellSize, map.getHeight() * currentCellSize);
         canvas.setStyle("-fx-cursor: crosshair;");
 
         canvas.setOnMouseMoved(this::onCanvasMouseMoved);
@@ -376,28 +473,145 @@ public class AgvFleetSimulatorApp extends Application {
         });
 
         canvasWrapper = new StackPane(canvas, scenarioBannerOverlay);
+        canvasWrapper.setAlignment(Pos.CENTER);
         canvasWrapper.setPadding(new Insets(4));
         canvasWrapper.setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-width: 1.5px; -fx-border-radius: 8px; -fx-background-radius: 8px;");
+        VBox.setVgrow(canvasWrapper, Priority.ALWAYS);
 
-        mapStatusBar = new Label("Warehouse Map: 24 x 16 Grid | Click on any AGV to select & inspect | Hover to inspect cell coordinates");
+        // Dynamically scale canvas to fit container: cellSize = min(freeW/24, freeH/16)
+        canvasWrapper.widthProperty().addListener((obs, oldW, newW) -> resizeCanvas(newW.doubleValue(), canvasWrapper.getHeight()));
+        canvasWrapper.heightProperty().addListener((obs, oldH, newH) -> resizeCanvas(canvasWrapper.getWidth(), newH.doubleValue()));
+
+        mapStatusBar = new Label("Bản đồ kho 24 x 16 ô | Bấm chọn xe AGV để kiểm tra lộ trình");
         mapStatusBar.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 10));
         mapStatusBar.setTextFill(Color.web("#94A3B8"));
         mapStatusBar.setPadding(new Insets(2, 6, 2, 6));
 
-        VBox centerBox = new VBox(4, canvasWrapper, mapStatusBar);
-        centerBox.setPadding(new Insets(4, 10, 4, 10));
-        centerBox.setAlignment(Pos.CENTER);
+        scenarioStatusBar = createScenarioStatusBar();
 
-        ScrollPane scrollPane = new ScrollPane(centerBox);
-        scrollPane.setFitToWidth(true);
-        scrollPane.setFitToHeight(true);
-        scrollPane.setStyle("-fx-background: #0B0F19; -fx-border-color: transparent; -fx-background-color: transparent;");
-        return scrollPane;
+        VBox centerBox = new VBox(4, scenarioStatusBar, canvasWrapper, mapStatusBar);
+        centerBox.setPadding(new Insets(4, 8, 4, 8));
+        centerBox.setAlignment(Pos.CENTER);
+        VBox.setVgrow(centerBox, Priority.ALWAYS);
+
+        return centerBox;
+    }
+
+    private void resizeCanvas(double freeW, double freeH) {
+        if (freeW <= 100 || freeH <= 100) return;
+        double padX = 16.0;
+        double padY = 16.0;
+        double availW = Math.max(100, freeW - padX);
+        double availH = Math.max(100, freeH - padY);
+        double newSize = MapScaleHelper.calculateCellSize(availW, availH);
+        if (Math.abs(newSize - currentCellSize) > 0.05) {
+            currentCellSize = newSize;
+            canvas.setWidth(map.getWidth() * currentCellSize);
+            canvas.setHeight(map.getHeight() * currentCellSize);
+        }
+    }
+
+    private HBox createScenarioStatusBar() {
+        HBox bar = new HBox(8);
+        bar.setAlignment(Pos.CENTER_LEFT);
+        bar.setPadding(new Insets(4, 10, 4, 10));
+        bar.setStyle("-fx-background-color: #111827; -fx-border-color: #38BDF8; -fx-border-width: 1px; -fx-border-radius: 6px; -fx-background-radius: 6px;");
+        bar.setVisible(false);
+        bar.setManaged(false);
+
+        scenarioStatusTitle = new Label("🎬 KỊCH BẢN ĐANG CHẠY");
+        scenarioStatusTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+        scenarioStatusTitle.setTextFill(Color.web("#38BDF8"));
+
+        scenarioStepperBox = new HBox(5);
+        scenarioStepperBox.setAlignment(Pos.CENTER_LEFT);
+
+        step1Pill = createStepPill("1. Khởi tạo");
+        step2Pill = createStepPill("2. Thực thi");
+        step3Pill = createStepPill("3. Hoàn tất");
+        scenarioStepperBox.getChildren().addAll(step1Pill, createStepArrow(), step2Pill, createStepArrow(), step3Pill);
+
+        Region sp = new Region();
+        HBox.setHgrow(sp, Priority.ALWAYS);
+
+        scenarioTimerLabel = new Label("⏱ 00.0s / 30s");
+        scenarioTimerLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+        scenarioTimerLabel.setStyle("-fx-text-fill: #FDE047; -fx-font-family: monospace;");
+
+        stopScenarioBtn = new Button("⏹ Dừng");
+        stopScenarioBtn.setStyle("-fx-background-color: #EF4444; -fx-text-fill: white; -fx-font-size: 10px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        stopScenarioBtn.setOnAction(e -> cancelScenario());
+        Tooltip.install(stopScenarioBtn, new Tooltip("Hủy bỏ kịch bản đang chạy"));
+
+        replayScenarioBtn = new Button("🔄 Chạy lại");
+        replayScenarioBtn.setStyle("-fx-background-color: #2563EB; -fx-text-fill: white; -fx-font-size: 10px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        replayScenarioBtn.setOnAction(e -> replayCurrentScenario());
+        Tooltip.install(replayScenarioBtn, new Tooltip("Chạy lại kịch bản hiện tại"));
+
+        bar.getChildren().addAll(scenarioStatusTitle, scenarioStepperBox, sp, scenarioTimerLabel, stopScenarioBtn, replayScenarioBtn);
+        return bar;
+    }
+
+    private Label createStepPill(String text) {
+        Label l = new Label(text);
+        l.setFont(Font.font("Segoe UI", FontWeight.BOLD, 9.5));
+        l.setStyle("-fx-background-color: #1E293B; -fx-text-fill: #94A3B8; -fx-padding: 2 6 2 6; -fx-background-radius: 4px;");
+        return l;
+    }
+
+    private Label createStepArrow() {
+        Label l = new Label("›");
+        l.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+        l.setTextFill(Color.web("#64748B"));
+        return l;
+    }
+
+    private void updateStepper(int activeStep, int totalSteps) {
+        Label[] pills = {step1Pill, step2Pill, step3Pill};
+        for (int i = 0; i < pills.length; i++) {
+            if (i + 1 == activeStep) {
+                pills[i].setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-padding: 2 6 2 6; -fx-background-radius: 4px; -fx-border-color: #38BDF8; -fx-border-width: 1px; -fx-border-radius: 4px;");
+            } else if (i + 1 < activeStep) {
+                pills[i].setStyle("-fx-background-color: #065F46; -fx-text-fill: #6EE7B7; -fx-padding: 2 6 2 6; -fx-background-radius: 4px;");
+            } else {
+                pills[i].setStyle("-fx-background-color: #1E293B; -fx-text-fill: #94A3B8; -fx-padding: 2 6 2 6; -fx-background-radius: 4px;");
+            }
+        }
+    }
+
+    private void cancelScenario() {
+        scenarioController.cancelCurrentScenario();
+        scenarioStatusBar.setVisible(false);
+        scenarioStatusBar.setManaged(false);
+        scenarioBannerOverlay.hideBanner();
+        scenarioBannerOverlay.hideVerdict();
+        mapStatusBar.setText("Đã dừng kịch bản.");
+    }
+
+    private void replayCurrentScenario() {
+        UiScenarioType active = scenarioController.getActiveScenario();
+        if (active == null) active = lastRunScenarioType;
+        if (active == UiScenarioType.S1_HEAD_ON_INTERSECTION) {
+            runScenarioS1(scenarioController.getS1VehicleCount());
+        } else if (active == UiScenarioType.S2_ADAPTIVE_AUCTION) {
+            runScenarioS2();
+        } else if (active == UiScenarioType.S3_CRASH_RECOVERY) {
+            runScenarioS3Variant("Hard Crash");
+        }
+    }
+
+    public void addLiveFeed(String text, Color color) {
+        if (!liveFeedEnabled || text == null || text.isBlank()) return;
+        long now = System.currentTimeMillis();
+        liveFeed.add(new LiveFeedEntry(text, now, color));
+        while (liveFeed.size() > 5) {
+            liveFeed.remove(0);
+        }
     }
 
     private void onCanvasMouseMoved(MouseEvent e) {
-        int gx = (int) (e.getX() / CELL_SIZE);
-        int gy = (int) (e.getY() / CELL_SIZE);
+        int gx = MapScaleHelper.mouseToGridX(e.getX(), currentCellSize, 0.0);
+        int gy = MapScaleHelper.mouseToGridY(e.getY(), currentCellSize, 0.0);
         if (map.isInBounds(gx, gy)) {
             hoveredCell = new GridPoint(gx, gy);
         } else {
@@ -407,8 +621,8 @@ public class AgvFleetSimulatorApp extends Application {
     }
 
     private void onCanvasMouseClicked(MouseEvent e) {
-        int gx = (int) (e.getX() / CELL_SIZE);
-        int gy = (int) (e.getY() / CELL_SIZE);
+        int gx = MapScaleHelper.mouseToGridX(e.getX(), currentCellSize, 0.0);
+        int gy = MapScaleHelper.mouseToGridY(e.getY(), currentCellSize, 0.0);
         if (!map.isInBounds(gx, gy)) return;
 
         GridPoint clicked = new GridPoint(gx, gy);
@@ -467,13 +681,26 @@ public class AgvFleetSimulatorApp extends Application {
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabPane.setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-width: 0 0 0 1px;");
 
-        Tab fleetTab = new Tab("🚜 Đội xe", createFleetTabContent());
-        Tab metricsTab = new Tab("📊 Chỉ số", metricsPanel);
-        Tab ordersTab = new Tab("📋 Nhiệm vụ", createOrdersTabContent());
+        Tab fleetTab = new Tab("🚜 Xe", createFleetTabContent());
+        fleetTab.setTooltip(new Tooltip("Đội xe AGV phi tập trung"));
+
+        Tab metricsTab = new Tab("📊 Số liệu", metricsPanel);
+        metricsTab.setTooltip(new Tooltip("Số liệu hiệu năng và thống kê FMS"));
+
+        Tab ordersTab = new Tab("📋 Việc", createOrdersTabContent());
+        ordersTab.setTooltip(new Tooltip("Quản lý nhiệm vụ vận chuyển"));
+
         Tab trafficTab = new Tab("📡 Wire", wireTrafficPanel);
+        trafficTab.setTooltip(new Tooltip("Nhật ký thông điệp mạng Wire"));
+
         Tab peersTab = new Tab("🌐 Peers", peersPanel);
-        Tab perNodeTab = new Tab("🔍 Per-Node", perNodePanel);
+        peersTab.setTooltip(new Tooltip("Danh sách các nút mạng lân cận"));
+
+        Tab perNodeTab = new Tab("🔍 Node", perNodePanel);
+        perNodeTab.setTooltip(new Tooltip("Chi tiết sự kiện từng nút AGV"));
+
         Tab timelineTab = new Tab("⏱ Timeline", timelinePanel);
+        timelineTab.setTooltip(new Tooltip("Dòng thời gian sự kiện hệ thống"));
 
         tabPane.getTabs().addAll(fleetTab, metricsTab, ordersTab, trafficTab, peersTab, perNodeTab, timelineTab);
         return tabPane;
@@ -607,6 +834,10 @@ public class AgvFleetSimulatorApp extends Application {
                 resetFleetToDefault();
             } else if (code == KeyCode.P || code == KeyCode.F11) {
                 togglePresentationMode();
+            } else if (code == KeyCode.ESCAPE) {
+                if (presentationModeActive) {
+                    togglePresentationMode();
+                }
             }
         });
     }
@@ -615,16 +846,20 @@ public class AgvFleetSimulatorApp extends Application {
         presentationModeActive = !presentationModeActive;
         if (presentationModeActive) {
             presentationModeBtn.setText("🗗 Thoát Trình Chiếu");
-            presentationModeBtn.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-            rootPane.setRight(null);
-            canvasWrapper.setScaleX(1.12);
-            canvasWrapper.setScaleY(1.12);
+            presentationModeBtn.setStyle("-fx-background-color: #7C3AED; -fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            topKpiRow.setVisible(false);
+            topKpiRow.setManaged(false);
+            enterpriseControlBar.setVisible(false);
+            enterpriseControlBar.setManaged(false);
+            mainSplitPane.setDividerPositions(0.72);
         } else {
             presentationModeBtn.setText("🖥 Trình chiếu");
-            presentationModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-            rootPane.setRight(rightSidebarNode);
-            canvasWrapper.setScaleX(1.0);
-            canvasWrapper.setScaleY(1.0);
+            presentationModeBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            topKpiRow.setVisible(true);
+            topKpiRow.setManaged(true);
+            enterpriseControlBar.setVisible(true);
+            enterpriseControlBar.setManaged(true);
+            mainSplitPane.setDividerPositions(0.62);
         }
     }
 
@@ -911,6 +1146,24 @@ public class AgvFleetSimulatorApp extends Application {
             }
         }
 
+        // Scenario timer & 30s timeout check (Requirement 8 & 9)
+        if (scenarioController.isRunning()) {
+            scenarioTimerLabel.setText(String.format(Locale.US, "⏱ %.1fs / 30s", scenarioController.getElapsedSeconds()));
+            if (scenarioController.isTimedOut()) {
+                StringBuilder reason = new StringBuilder("Quá thời gian 30s ở bước " + scenarioController.getCurrentStep());
+                List<Long> waitingAgvs = robots.stream()
+                        .filter(r -> r.getState() == AgentState.WAITING_MUTEX || r.getWaitingIntersection() != null)
+                        .map(AgvRobot::getNodeId)
+                        .toList();
+                if (!waitingAgvs.isEmpty()) {
+                    reason.append("; xe còn WAITING_MUTEX: ").append(waitingAgvs);
+                }
+                log.warn("Scenario timed out: {}", reason);
+                UiScenarioResult timeoutRes = scenarioController.failWithTimeout(reason.toString());
+                scenarioBannerOverlay.showVerdict(timeoutRes);
+            }
+        }
+
         updateDashboardTelemetry();
         metricsPanel.update(metricsCollector);
         wireTrafficPanel.refreshView();
@@ -923,7 +1176,7 @@ public class AgvFleetSimulatorApp extends Application {
         if (fleetPaused) return;
 
         try {
-            // 1. Update Physics for each robot
+            // 1. Update Physics for each robot & record history trails
             for (AgvRobot robot : robots) {
                 robot.updatePhysicsAndLogic(null);
                 GridPoint cur = robot.getCurrentGridPos();
@@ -931,6 +1184,23 @@ public class AgvFleetSimulatorApp extends Application {
                 if (prev != null && !prev.equals(cur)) {
                     if (perNodePanel != null) perNodePanel.recordEvent(robot.getNodeId(), "Đổi ô sang " + cur);
                     if (timelinePanel != null) timelinePanel.recordEvent(robot.getNodeId(), TimelinePanel.EventCategory.MOVE_STEP, "Đổi ô tới " + cur);
+                }
+
+                // Record movement trail (up to 10 points)
+                Deque<Position2D> trail = robotTrails.computeIfAbsent(robot.getNodeId(), k -> new ArrayDeque<>());
+                Position2D curPos = new Position2D(robot.getRenderX(), robot.getRenderY());
+                if (trail.isEmpty() || Math.hypot(trail.peekLast().x() - curPos.x(), trail.peekLast().y() - curPos.y()) > 0.05) {
+                    trail.addLast(curPos);
+                    while (trail.size() > 10) {
+                        trail.removeFirst();
+                    }
+                }
+
+                // Track crash timestamp
+                if (robot.isCrashed()) {
+                    crashTimestamps.putIfAbsent(robot.getNodeId(), System.currentTimeMillis());
+                } else {
+                    crashTimestamps.remove(robot.getNodeId());
                 }
             }
 
@@ -949,25 +1219,34 @@ public class AgvFleetSimulatorApp extends Application {
                 }
             }
 
-            // 3. Check S1 Scenario Completion
+            // 3. Check S1 Scenario Completion (Requirement 9: all reached/idle & no mutex held/waited)
             if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S1_HEAD_ON_INTERSECTION) {
-                boolean allDone = true;
-                for (AgvRobot r : robots) {
-                    if (!r.getRemainingPath().isEmpty() || r.getState() == AgentState.WAITING_MUTEX) {
-                        allDone = false;
-                        break;
+                if (scenarioController.getCurrentStep() >= 2) {
+                    List<Long> blockingVehicles = new ArrayList<>();
+                    boolean allDone = !robots.isEmpty();
+                    for (AgvRobot r : robots) {
+                        boolean reached = r.getRemainingPath().isEmpty() || r.getState() == AgentState.IDLE;
+                        boolean hasMutex = r.getHeldIntersection() != null || r.getWaitingIntersection() != null || r.getState() == AgentState.WAITING_MUTEX;
+                        if (!reached || hasMutex) {
+                            allDone = false;
+                            blockingVehicles.add(r.getNodeId());
+                        }
+                    }
+                    if (!allDone && log.isDebugEnabled()) {
+                        log.debug("S1 waiting for robots: {}", blockingVehicles);
+                    }
+                    if (allDone) {
+                        Platform.runLater(() -> {
+                            UiScenarioResult res = scenarioController.finishS1Scenario(
+                                    true,
+                                    metricsCollector.getGroundTruthCollisions(),
+                                    metricsCollector.getAverageMutexWaitTimeMs()
+                            );
+                            scenarioBannerOverlay.showVerdict(res);
+                        });
                     }
                 }
-                if (allDone && !robots.isEmpty()) {
-                    Platform.runLater(() -> {
-                        UiScenarioResult res = scenarioController.finishS1Scenario(
-                                true,
-                                metricsCollector.getGroundTruthCollisions(),
-                                metricsCollector.getAverageMutexWaitTimeMs()
-                        );
-                        scenarioBannerOverlay.showVerdict(res);
-                    });
-                }
+            }
             }
         } catch (Exception e) {
             log.error("Error in physics simulation tick", e);
@@ -989,10 +1268,10 @@ public class AgvFleetSimulatorApp extends Application {
         gc.setStroke(Color.web("#1E293B"));
         gc.setLineWidth(1.0);
         for (int x = 0; x <= map.getWidth(); x++) {
-            gc.strokeLine(x * CELL_SIZE, 0, x * CELL_SIZE, map.getHeight() * CELL_SIZE);
+            gc.strokeLine(x * currentCellSize, 0, x * currentCellSize, map.getHeight() * currentCellSize);
         }
         for (int y = 0; y <= map.getHeight(); y++) {
-            gc.strokeLine(0, y * CELL_SIZE, map.getWidth() * CELL_SIZE, y * CELL_SIZE);
+            gc.strokeLine(0, y * currentCellSize, map.getWidth() * currentCellSize, y * currentCellSize);
         }
 
         // Zone Annotations
@@ -1002,31 +1281,31 @@ public class AgvFleetSimulatorApp extends Application {
         for (int x = 0; x < map.getWidth(); x++) {
             for (int y = 0; y < map.getHeight(); y++) {
                 CellType type = map.getCellType(x, y);
-                double px = x * CELL_SIZE;
-                double py = y * CELL_SIZE;
+                double px = x * currentCellSize;
+                double py = y * currentCellSize;
 
                 switch (type) {
                     case OBSTACLE -> {
                         gc.setFill(Color.web("#1E293B"));
-                        gc.fillRoundRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4, 4, 4);
+                        gc.fillRoundRect(px + 2, py + 2, currentCellSize - 4, currentCellSize - 4, 4, 4);
                         gc.setStroke(Color.web("#334155"));
                         gc.setLineWidth(1.5);
-                        gc.strokeRoundRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4, 4, 4);
+                        gc.strokeRoundRect(px + 2, py + 2, currentCellSize - 4, currentCellSize - 4, 4, 4);
 
                         gc.setStroke(Color.web("#293548"));
                         gc.setLineWidth(1.0);
-                        gc.strokeLine(px + 3, py + CELL_SIZE / 2, px + CELL_SIZE - 3, py + CELL_SIZE / 2);
+                        gc.strokeLine(px + 3, py + currentCellSize / 2, px + currentCellSize - 3, py + currentCellSize / 2);
                     }
                     case CHARGING_STATION -> {
                         gc.setFill(Color.web("#064E3B", 0.5));
-                        gc.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                        gc.fillRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
                         gc.setStroke(Color.web("#10B981"));
                         gc.setLineWidth(1.5);
-                        gc.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                        gc.strokeRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
 
                         gc.setFill(Color.web("#34D399"));
-                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10));
-                        gc.fillText("⚡", px + 8, py + 18);
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, Math.max(8.0, currentCellSize * 0.35)));
+                        gc.fillText("⚡", px + currentCellSize * 0.3, py + currentCellSize * 0.65);
                     }
                     case INTERSECTION -> {
                         String cellId = map.getIntersectionCellId(x, y);
@@ -1038,22 +1317,22 @@ public class AgvFleetSimulatorApp extends Application {
                                 .findFirst();
 
                         if (holdingRobot.isPresent()) {
-                            // HELD: Warm Orange fill with label
-                            gc.setFill(Color.web("#EA580C", 0.65));
-                            gc.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-                            gc.setStroke(Color.web("#F97316"));
+                            // HELD: Red fill with bold label (Requirement 10: đỏ=HELD, nhãn "#id đang giữ")
+                            gc.setFill(Color.web("#DC2626", 0.65));
+                            gc.fillRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
+                            gc.setStroke(Color.web("#EF4444"));
                             gc.setLineWidth(2.5);
-                            gc.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                            gc.strokeRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
 
                             gc.setFill(Color.WHITE);
-                            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
-                            gc.fillText("🔒A" + holdingRobot.get().getNodeId(), px + 2, py + 18);
+                            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, Math.max(7.5, currentCellSize * 0.28)));
+                            gc.fillText("#" + holdingRobot.get().getNodeId() + " đang giữ", px + 2, py + currentCellSize * 0.65);
 
                             // Draw dashed arrow from any waiting / deferred robot to holding robot
                             List<Long> deferredIds = holdingRobot.get().getNode().getDeferredNodes(cellId);
                             if (deferredIds != null && !deferredIds.isEmpty()) {
-                                double hx = holdingRobot.get().getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                                double hy = holdingRobot.get().getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                                double hx = holdingRobot.get().getRenderX() * currentCellSize + currentCellSize / 2;
+                                double hy = holdingRobot.get().getRenderY() * currentCellSize + currentCellSize / 2;
 
                                 gc.setStroke(Color.web("#F59E0B", 0.85));
                                 gc.setLineWidth(1.8);
@@ -1061,29 +1340,29 @@ public class AgvFleetSimulatorApp extends Application {
 
                                 for (Long dId : deferredIds) {
                                     robots.stream().filter(r -> r.getNodeId() == dId).findFirst().ifPresent(dRobot -> {
-                                        double dx = dRobot.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                                        double dy = dRobot.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                                        double dx = dRobot.getRenderX() * currentCellSize + currentCellSize / 2;
+                                        double dy = dRobot.getRenderY() * currentCellSize + currentCellSize / 2;
                                         gc.strokeLine(dx, dy, hx, hy);
                                     });
                                 }
                                 gc.setLineDashes(null);
                             }
                         } else if (waitingRobot.isPresent()) {
-                            // WANTED / Requesting: Amber fill
-                            gc.setFill(Color.web("#CA8A04", 0.35));
-                            gc.fillRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                            // WANTED / Requesting: Amber fill (Requirement 10: vàng=WANTED, nhãn "#id đang xin")
+                            gc.setFill(Color.web("#CA8A04", 0.40));
+                            gc.fillRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
                             gc.setStroke(Color.web("#EAB308"));
                             gc.setLineWidth(2.0);
-                            gc.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+                            gc.strokeRect(px + 1, py + 1, currentCellSize - 2, currentCellSize - 2);
 
                             gc.setFill(Color.web("#FDE047"));
-                            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.0));
-                            gc.fillText("⏳REQ", px + 1, py + 18);
+                            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, Math.max(7.5, currentCellSize * 0.28)));
+                            gc.fillText("#" + waitingRobot.get().getNodeId() + " đang xin", px + 2, py + currentCellSize * 0.65);
                         } else {
-                            // RELEASED: Subtle border
-                            gc.setStroke(Color.web("#CA8A04", 0.45));
-                            gc.setLineWidth(1.0);
-                            gc.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+                            // RELEASED: Subtle gray border (Requirement 10: xám=RELEASED)
+                            gc.setStroke(Color.web("#475569", 0.70));
+                            gc.setLineWidth(1.2);
+                            gc.strokeRect(px + 2, py + 2, currentCellSize - 4, currentCellSize - 4);
                         }
                     }
                     case EMPTY -> {}
@@ -1094,20 +1373,20 @@ public class AgvFleetSimulatorApp extends Application {
         // 2. Draw P2P Mesh Heartbeat Links between Peer AGVs
         for (int i = 0; i < robots.size(); i++) {
             AgvRobot r1 = robots.get(i);
-            if (r1.isCrashed()) continue;
-            double x1 = r1.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-            double y1 = r1.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+            double x1 = r1.getRenderX() * currentCellSize + currentCellSize / 2;
+            double y1 = r1.getRenderY() * currentCellSize + currentCellSize / 2;
 
             for (PeerSession session : r1.getNode().getActivePeers()) {
                 if (session.getPeerId() > r1.getNodeId()) {
                     robots.stream().filter(r -> r.getNodeId() == session.getPeerId()).findFirst().ifPresent(r2 -> {
-                        double x2 = r2.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                        double y2 = r2.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                        double x2 = r2.getRenderX() * currentCellSize + currentCellSize / 2;
+                        double y2 = r2.getRenderY() * currentCellSize + currentCellSize / 2;
 
                         long age = System.currentTimeMillis() - session.getLastHeartbeatTimestamp();
-                        if (r2.isCrashed() || age > 1500) {
-                            gc.setStroke(Color.web("#EF4444", 0.8));
-                            gc.setLineWidth(1.5);
+                        if (r1.isCrashed() || r2.isCrashed() || age > 1500) {
+                            // Link turns red if crashed or timed out (Requirement 10: link đỏ)
+                            gc.setStroke(Color.web("#EF4444", 0.85));
+                            gc.setLineWidth(1.6);
                             gc.setLineDashes(4.0, 4.0);
                         } else if (age > 600) {
                             gc.setStroke(Color.web("#F59E0B", 0.65));
@@ -1128,16 +1407,16 @@ public class AgvFleetSimulatorApp extends Application {
         // 3. Draw Active CNP Task Auction Visualization
         if (cnpVisualAnnouncerId != null && System.currentTimeMillis() - cnpVisualTimestamp < 4500) {
             robots.stream().filter(r -> r.getNodeId() == cnpVisualAnnouncerId).findFirst().ifPresent(announcer -> {
-                double ax = announcer.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                double ay = announcer.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                double ax = announcer.getRenderX() * currentCellSize + currentCellSize / 2;
+                double ay = announcer.getRenderY() * currentCellSize + currentCellSize / 2;
 
                 for (Map.Entry<Long, Double> entry : cnpVisualBids.entrySet()) {
                     long bidderId = entry.getKey();
                     double cost = entry.getValue();
 
                     robots.stream().filter(r -> r.getNodeId() == bidderId).findFirst().ifPresent(bidder -> {
-                        double bx = bidder.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                        double by = bidder.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                        double bx = bidder.getRenderX() * currentCellSize + currentCellSize / 2;
+                        double by = bidder.getRenderY() * currentCellSize + currentCellSize / 2;
 
                         gc.setStroke(Color.web("#6366F1", 0.7));
                         gc.setLineWidth(1.8);
@@ -1161,8 +1440,8 @@ public class AgvFleetSimulatorApp extends Application {
 
                 if (cnpVisualWinnerId != null) {
                     robots.stream().filter(r -> r.getNodeId() == cnpVisualWinnerId).findFirst().ifPresent(winner -> {
-                        double wx = winner.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                        double wy = winner.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                        double wx = winner.getRenderX() * currentCellSize + currentCellSize / 2;
+                        double wy = winner.getRenderY() * currentCellSize + currentCellSize / 2;
 
                         gc.setStroke(Color.web("#10B981"));
                         gc.setLineWidth(2.8);
@@ -1178,7 +1457,28 @@ public class AgvFleetSimulatorApp extends Application {
             });
         }
 
-        // 4. Draw Waypoints Trails
+        // 4. Draw Movement History Trails (Requirement 10: vệt di chuyển mờ dần 10 bước gần nhất)
+        for (AgvRobot robot : robots) {
+            Deque<Position2D> trail = robotTrails.get(robot.getNodeId());
+            if (trail != null && trail.size() > 1) {
+                List<Position2D> pts = new ArrayList<>(trail);
+                for (int t = 1; t < pts.size(); t++) {
+                    Position2D pPrev = pts.get(t - 1);
+                    Position2D pCur = pts.get(t);
+                    double alpha = 0.08 + 0.42 * ((double) t / pts.size());
+                    gc.setStroke(Color.web("#38BDF8", alpha));
+                    gc.setLineWidth(Math.max(1.0, currentCellSize * 0.08));
+                    gc.strokeLine(
+                            pPrev.x() * currentCellSize + currentCellSize / 2,
+                            pPrev.y() * currentCellSize + currentCellSize / 2,
+                            pCur.x() * currentCellSize + currentCellSize / 2,
+                            pCur.y() * currentCellSize + currentCellSize / 2
+                    );
+                }
+            }
+        }
+
+        // 5. Draw Waypoints Future Path
         for (AgvRobot robot : robots) {
             if (robot.isCrashed()) continue;
             List<GridPoint> path = robot.getRemainingPath();
@@ -1187,11 +1487,11 @@ public class AgvFleetSimulatorApp extends Application {
                 gc.setStroke(trailColor);
                 gc.setLineWidth(robot == selectedRobot ? 2.5 : 1.5);
 
-                double prevX = robot.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-                double prevY = robot.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
+                double prevX = robot.getRenderX() * currentCellSize + currentCellSize / 2;
+                double prevY = robot.getRenderY() * currentCellSize + currentCellSize / 2;
                 for (GridPoint wp : path) {
-                    double wx = wp.x() * CELL_SIZE + CELL_SIZE / 2;
-                    double wy = wp.y() * CELL_SIZE + CELL_SIZE / 2;
+                    double wx = wp.x() * currentCellSize + currentCellSize / 2;
+                    double wy = wp.y() * currentCellSize + currentCellSize / 2;
                     gc.strokeLine(prevX, prevY, wx, wy);
                     prevX = wx;
                     prevY = wy;
@@ -1199,13 +1499,13 @@ public class AgvFleetSimulatorApp extends Application {
             }
         }
 
-        // 5. Draw Tasks (Pickup & Delivery Markers)
+        // 6. Draw Tasks (Pickup & Delivery Markers)
         for (Task task : allTasks) {
             if (task.getStatus() == Task.Status.AUCTIONING || task.getStatus() == Task.Status.ASSIGNED || task.getStatus() == Task.Status.IN_TRANSIT) {
-                double px = task.getPickupX() * CELL_SIZE + CELL_SIZE / 2;
-                double py = task.getPickupY() * CELL_SIZE + CELL_SIZE / 2;
-                double dx = task.getDeliveryX() * CELL_SIZE + CELL_SIZE / 2;
-                double dy = task.getDeliveryY() * CELL_SIZE + CELL_SIZE / 2;
+                double px = task.getPickupX() * currentCellSize + currentCellSize / 2;
+                double py = task.getPickupY() * currentCellSize + currentCellSize / 2;
+                double dx = task.getDeliveryX() * currentCellSize + currentCellSize / 2;
+                double dy = task.getDeliveryY() * currentCellSize + currentCellSize / 2;
 
                 gc.setFill(Color.web("#10B981", 0.35));
                 gc.fillOval(px - 10, py - 10, 20, 20);
@@ -1227,11 +1527,11 @@ public class AgvFleetSimulatorApp extends Application {
             }
         }
 
-        // 6. Draw AGV Robots
+        // 7. Draw AGV Robots (Requirement 10: radius = 40% cell, bold #id, status ring, crashed flashes 3s)
         for (AgvRobot robot : robots) {
-            double cx = robot.getRenderX() * CELL_SIZE + CELL_SIZE / 2;
-            double cy = robot.getRenderY() * CELL_SIZE + CELL_SIZE / 2;
-            double radius = 10.5;
+            double cx = robot.getRenderX() * currentCellSize + currentCellSize / 2;
+            double cy = robot.getRenderY() * currentCellSize + currentCellSize / 2;
+            double radius = currentCellSize * 0.40; // 40% cell size!
 
             Color statusColor = switch (robot.getState()) {
                 case IDLE -> Color.web("#3B82F6");
@@ -1248,28 +1548,48 @@ public class AgvFleetSimulatorApp extends Application {
                 gc.strokeOval(cx - radius - 4, cy - radius - 4, (radius + 4) * 2, (radius + 4) * 2);
             }
 
+            // Outer status glow
             gc.setFill(statusColor.deriveColor(0, 1, 1, 0.25));
             gc.fillOval(cx - radius - 2, cy - radius - 2, (radius + 2) * 2, (radius + 2) * 2);
 
+            // Robot body
             gc.setFill(Color.web("#0F172A"));
             gc.fillOval(cx - radius, cy - radius, radius * 2, radius * 2);
             gc.setStroke(statusColor);
             gc.setLineWidth(2.2);
             gc.strokeOval(cx - radius, cy - radius, radius * 2, radius * 2);
 
-            gc.setFill(Color.WHITE);
-            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
-            gc.fillText("A" + robot.getNodeId(), cx - 5.5, cy + 3.5);
+            if (robot.isCrashed()) {
+                // Crashed robot: red X, flashes for 3 seconds (Requirement 10)
+                Long crashTime = crashTimestamps.get(robot.getNodeId());
+                long elapsedCrash = crashTime != null ? (System.currentTimeMillis() - crashTime) : 5000;
+                boolean flashOn = elapsedCrash > 3000 || ((System.currentTimeMillis() / 250) % 2 == 0);
 
-            if (robot.isCarryingCargo()) {
-                gc.setFill(Color.web("#F59E0B"));
-                gc.fillRect(cx + 5, cy - 6, 6, 6);
-                gc.setStroke(Color.WHITE);
-                gc.setLineWidth(1.0);
-                gc.strokeRect(cx + 5, cy - 6, 6, 6);
+                if (flashOn) {
+                    gc.setFill(Color.web("#EF4444"));
+                    gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, Math.max(12.0, currentCellSize * 0.55)));
+                    gc.fillText("✖", cx - currentCellSize * 0.16, cy + currentCellSize * 0.18);
+                }
+            } else {
+                // Bold "#id" label (Requirement 10)
+                gc.setFill(Color.WHITE);
+                gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, Math.max(9.0, currentCellSize * 0.32)));
+                String idStr = "#" + robot.getNodeId();
+                double textOffset = robot.getNodeId() >= 10 ? currentCellSize * 0.28 : currentCellSize * 0.18;
+                gc.fillText(idStr, cx - textOffset, cy + currentCellSize * 0.12);
+
+                if (robot.isCarryingCargo()) {
+                    gc.setFill(Color.web("#F59E0B"));
+                    double boxS = Math.max(5.0, currentCellSize * 0.22);
+                    gc.fillRect(cx + radius * 0.5, cy - radius * 0.7, boxS, boxS);
+                    gc.setStroke(Color.WHITE);
+                    gc.setLineWidth(1.0);
+                    gc.strokeRect(cx + radius * 0.5, cy - radius * 0.7, boxS, boxS);
+                }
             }
 
-            double batWidth = 18.0;
+            // Battery bar
+            double batWidth = currentCellSize * 0.70;
             double batHeight = 3.0;
             double batX = cx - batWidth / 2;
             double batY = cy - radius - 5;
@@ -1284,7 +1604,7 @@ public class AgvFleetSimulatorApp extends Application {
             gc.fillRect(batX, batY, fillW, batHeight);
         }
 
-        // 7. Draw Flying Business Packets
+        // 8. Draw Flying Business Packets (Requirement 10: only business opcodes)
         long now = System.currentTimeMillis();
         for (FlyingPacket p : flyingPackets) {
             double progress = (now - p.startTimeMs) / (double) p.durationMs;
@@ -1308,10 +1628,13 @@ public class AgvFleetSimulatorApp extends Application {
             gc.strokeOval(curX - 3.5, curY - 3.5, 7, 7);
         }
 
-        // 8. Draw Flying Packet Legend (Bottom-Left)
+        // 9. Draw Flying Packet Legend (Bottom-Left)
         drawPacketLegend(gc);
 
-        // 9. Draw Presentation Banner (Top Center)
+        // 10. Draw Live Event Feed (Requirement 11)
+        drawLiveEventFeed(gc);
+
+        // 11. Draw Presentation Banner (Top Center)
         if (presentationBannerText != null && now < presentationBannerExpiryMs) {
             double bannerW = Math.min(720, canvas.getWidth() - 40);
             double bannerH = 34.0;
@@ -1325,8 +1648,38 @@ public class AgvFleetSimulatorApp extends Application {
             gc.strokeRoundRect(bannerX, bannerY, bannerW, bannerH, 8, 8);
 
             gc.setFill(Color.web("#FDE047"));
-            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
+            gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, presentationModeActive ? 14 : 12));
             gc.fillText("📢 " + presentationBannerText, bannerX + 14, bannerY + 22);
+        }
+    }
+
+    private void drawLiveEventFeed(GraphicsContext gc) {
+        if (!liveFeedEnabled || liveFeed.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        double startX = 14.0;
+        double startY = canvas.getHeight() - 145.0;
+        double lineHeight = presentationModeActive ? 18.0 : 15.0;
+        double fontSize = presentationModeActive ? 11.5 : 9.5;
+
+        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, fontSize));
+        int lineIdx = 0;
+        for (LiveFeedEntry entry : liveFeed) {
+            long age = now - entry.timestampMs();
+            if (age > 6000) {
+                continue;
+            }
+            double alpha = 1.0;
+            if (age > 4000) {
+                alpha = Math.max(0.0, 1.0 - (age - 4000) / 2000.0);
+            }
+
+            Color textColor = entry.color() != null ? entry.color() : Color.WHITE;
+            gc.setFill(Color.web("#0B132B", 0.75 * alpha));
+            gc.fillRoundRect(startX - 4, startY + lineIdx * lineHeight - (fontSize + 1), 320, lineHeight, 4, 4);
+
+            gc.setFill(textColor.deriveColor(0, 1, 1, alpha));
+            gc.fillText(entry.text(), startX, startY + lineIdx * lineHeight);
+            lineIdx++;
         }
     }
 
@@ -1347,15 +1700,15 @@ public class AgvFleetSimulatorApp extends Application {
         gc.fillText("GÓI TIN:", legX + 8, legY + 20);
 
         double curX = legX + 55;
-        drawLegendBadge(gc, "MUTEX", Color.web("#D97706"), curX, legY + 13);
+        drawLegendBadge(gc, "MUTEX", Color.web("#F97316"), curX, legY + 13);
         curX += 65;
-        drawLegendBadge(gc, "ANNOUNCE", Color.web("#2563EB"), curX, legY + 13);
+        drawLegendBadge(gc, "ANNOUNCE", Color.web("#38BDF8"), curX, legY + 13);
         curX += 75;
-        drawLegendBadge(gc, "BID", Color.web("#9333EA"), curX, legY + 13);
+        drawLegendBadge(gc, "BID", Color.web("#38BDF8"), curX, legY + 13);
         curX += 50;
-        drawLegendBadge(gc, "AWARD", Color.web("#DC2626"), curX, legY + 13);
+        drawLegendBadge(gc, "AWARD", Color.web("#EF4444"), curX, legY + 13);
         curX += 65;
-        drawLegendBadge(gc, "COMPLETE", Color.web("#0D9488"), curX, legY + 13);
+        drawLegendBadge(gc, "COMPLETE", Color.web("#10B981"), curX, legY + 13);
     }
 
     private void drawLegendBadge(GraphicsContext gc, String text, Color color, double x, double y) {
@@ -1370,24 +1723,24 @@ public class AgvFleetSimulatorApp extends Application {
         AgvRobot sender = robots.stream().filter(r -> r.getNodeId() == senderId).findFirst().orElse(null);
         if (sender == null) return;
 
-        double startX = sender.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
-        double startY = sender.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+        double startX = sender.getRenderX() * currentCellSize + currentCellSize / 2.0;
+        double startY = sender.getRenderY() * currentCellSize + currentCellSize / 2.0;
         Color color = getOpcodeCanvasColor(op);
         long now = System.currentTimeMillis();
 
         if (receiverId < 0) {
             for (AgvRobot receiver : robots) {
                 if (receiver.getNodeId() != senderId && !receiver.isCrashed()) {
-                    double endX = receiver.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
-                    double endY = receiver.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+                    double endX = receiver.getRenderX() * currentCellSize + currentCellSize / 2.0;
+                    double endY = receiver.getRenderY() * currentCellSize + currentCellSize / 2.0;
                     flyingPackets.add(new FlyingPacket(startX, startY, endX, endY, color, now, 300L, true));
                 }
             }
         } else {
             AgvRobot receiver = robots.stream().filter(r -> r.getNodeId() == receiverId).findFirst().orElse(null);
             if (receiver != null) {
-                double endX = receiver.getRenderX() * CELL_SIZE + CELL_SIZE / 2.0;
-                double endY = receiver.getRenderY() * CELL_SIZE + CELL_SIZE / 2.0;
+                double endX = receiver.getRenderX() * currentCellSize + currentCellSize / 2.0;
+                double endY = receiver.getRenderY() * currentCellSize + currentCellSize / 2.0;
                 flyingPackets.add(new FlyingPacket(startX, startY, endX, endY, color, now, 300L, false));
             }
         }
@@ -1396,13 +1749,10 @@ public class AgvFleetSimulatorApp extends Application {
     private Color getOpcodeCanvasColor(Opcode op) {
         if (op == null) return Color.web("#94A3B8");
         return switch (op) {
-            case MUTEX_REQUEST -> Color.web("#D97706");
-            case MUTEX_REPLY -> Color.web("#16A34A");
-            case MUTEX_RELEASE -> Color.web("#64748B");
-            case TASK_ANNOUNCE -> Color.web("#2563EB");
-            case TASK_BID -> Color.web("#9333EA");
-            case TASK_AWARD -> Color.web("#DC2626");
-            case TASK_COMPLETE -> Color.web("#0D9488");
+            case MUTEX_REQUEST, MUTEX_REPLY, MUTEX_RELEASE -> Color.web("#F97316"); // MUTEX cam
+            case TASK_ANNOUNCE, TASK_BID -> Color.web("#38BDF8"); // BID/ANNOUNCE xanh
+            case TASK_AWARD -> Color.web("#EF4444"); // AWARD đỏ
+            case TASK_COMPLETE -> Color.web("#10B981"); // COMPLETE xanh lá
             default -> Color.web("#94A3B8");
         };
     }
@@ -1413,10 +1763,10 @@ public class AgvFleetSimulatorApp extends Application {
 
         gc.fillText("INBOUND DOCKS", 6, 12);
         gc.fillText("OUTBOUND BAYS", canvas.getWidth() - 90, 12);
-        gc.fillText("ZONE A", 4 * CELL_SIZE, 3 * CELL_SIZE - 2);
-        gc.fillText("ZONE B", 9 * CELL_SIZE, 3 * CELL_SIZE - 2);
-        gc.fillText("ZONE C", 14 * CELL_SIZE, 3 * CELL_SIZE - 2);
-        gc.fillText("ZONE D", 19 * CELL_SIZE, 3 * CELL_SIZE - 2);
+        gc.fillText("ZONE A", 4 * currentCellSize, 3 * currentCellSize - 2);
+        gc.fillText("ZONE B", 9 * currentCellSize, 3 * currentCellSize - 2);
+        gc.fillText("ZONE C", 14 * currentCellSize, 3 * currentCellSize - 2);
+        gc.fillText("ZONE D", 19 * currentCellSize, 3 * currentCellSize - 2);
     }
 
     // =========================================================================
@@ -1477,6 +1827,7 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onMutexRequested(String cellId, long requestTimestamp) {
                 mutexRequestTimestamps.put(nodeId + ":" + cellId, System.currentTimeMillis());
+                addLiveFeed("AGV #" + nodeId + " xin Mutex " + cellId, Color.web("#F59E0B"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Yêu cầu Mutex " + cellId + " (L=" + requestTimestamp + ")");
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_REQ, "Yêu cầu Mutex " + cellId);
             }
@@ -1488,12 +1839,14 @@ public class AgvFleetSimulatorApp extends Application {
                     long elapsed = System.currentTimeMillis() - startMs;
                     metricsCollector.recordMutexWait(elapsed);
                 }
+                addLiveFeed("AGV #" + nodeId + " chiếm Mutex " + cellId, Color.web("#10B981"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Đã chiếm giữ Mutex " + cellId);
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_OK, "Chiếm Mutex " + cellId);
             }
 
             @Override
             public void onMutexReleased(String cellId) {
+                addLiveFeed("AGV #" + nodeId + " nhả Mutex " + cellId, Color.web("#94A3B8"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Giải phóng Mutex " + cellId);
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.MUTEX_OK, "Nhả Mutex " + cellId);
             }
@@ -1503,6 +1856,7 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onTaskAnnounced(Task task) {
                 metricsCollector.recordAuctionAnnounced();
+                addLiveFeed("AGV #" + nodeId + " phát thầu " + task.getTaskId(), Color.web("#38BDF8"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Phát thầu nhiệm vụ " + task.getTaskId());
             }
 
@@ -1510,12 +1864,14 @@ public class AgvFleetSimulatorApp extends Application {
             public void onBidSubmitted(String taskId, double cost, double battery) {
                 metricsCollector.recordBidSubmitted();
                 cnpVisualBids.put(nodeId, cost);
+                addLiveFeed(String.format(Locale.US, "AGV #%d nộp thầu %s (c=%.1f)", nodeId, taskId, cost), Color.web("#8B5CF6"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, String.format(Locale.US, "Nộp thầu %s (cost=%.2f, pin=%.0f%%)", taskId, cost, battery));
             }
 
             @Override
             public void onTaskWon(Task task) {
                 cnpVisualWinnerId = nodeId;
+                addLiveFeed("AGV #" + nodeId + " trúng thầu " + task.getTaskId(), Color.web("#10B981"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Trúng thầu nhiệm vụ " + task.getTaskId());
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.TASK_WON, "Trúng thầu " + task.getTaskId());
                 if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S2_ADAPTIVE_AUCTION) {
@@ -1531,6 +1887,7 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onTaskCompleted(String taskId, long contractorNodeId) {
                 metricsCollector.recordTaskCompleted();
+                addLiveFeed("AGV #" + nodeId + " hoàn thành " + taskId, Color.web("#10B981"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, "Hoàn thành nhiệm vụ " + taskId);
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.TASK_DONE, "Xong " + taskId);
             }
@@ -1732,8 +2089,10 @@ public class AgvFleetSimulatorApp extends Application {
         crashRebootBtn.setOnAction(e -> {
             if (robot.isCrashed()) {
                 robot.recover();
+                addLiveFeed("AGV #" + robot.getNodeId() + " đã khởi động lại (Reboot)", Color.web("#10B981"));
             } else {
                 robot.crash();
+                addLiveFeed("AGV #" + robot.getNodeId() + " gặp sự cố CRASH!", Color.web("#EF4444"));
             }
         });
 
