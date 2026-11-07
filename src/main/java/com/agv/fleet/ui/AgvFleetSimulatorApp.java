@@ -1843,6 +1843,7 @@ public class AgvFleetSimulatorApp extends Application {
     // =========================================================================
     private void initFleet() {
         map.setCellType(4, 12, CellType.EMPTY);
+        map.setCellType(3, 12, CellType.EMPTY);
         createAndStartRobot(1L, new GridPoint(2, 2), 95.0, "Pallet AGV-1", 1.0);
         createAndStartRobot(2L, new GridPoint(8, 2), 80.0, "Forklift AGV-2", 1.0);
         createAndStartRobot(3L, new GridPoint(14, 6), 65.0, "Tugger AGV-3", 1.0);
