@@ -91,9 +91,9 @@ public class AgvFleetSimulatorApp extends Application {
     private final List<Task> allTasks = new CopyOnWriteArrayList<>();
 
     private final AtomicInteger taskCounter = new AtomicInteger(1001);
-    private final AtomicInteger nextNodeId = new AtomicInteger(6);
+    private final AtomicInteger nextNodeId = new AtomicInteger(7);
     private final Random seededRandom = new Random(42);
-    private final java.util.concurrent.atomic.AtomicBoolean autoDemoActive = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean autoDemoActive = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final ScheduledExecutorService backgroundScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "simulator-auto-demo");
         t.setDaemon(true);
@@ -101,6 +101,7 @@ public class AgvFleetSimulatorApp extends Application {
     });
     private ScheduledFuture<?> autoDemoFuture = null;
     private ToggleButton autoDemoBtn;
+    private ContinuousTaskDriver autoDriver;
 
     // Metrics, Traffic, and Scenarios Logic
     private final FleetMetricsCollector metricsCollector = new FleetMetricsCollector();
@@ -233,6 +234,9 @@ public class AgvFleetSimulatorApp extends Application {
             @Override
             public void onScenarioStarted(UiScenarioType type, String banner) {
                 lastRunScenarioType = type;
+                if (autoDriver != null) {
+                    autoDriver.setEnabled(false);
+                }
                 Platform.runLater(() -> {
                     scenarioStatusTitle.setText("🎬 " + type.getTitle().toUpperCase());
                     updateStepper(1, type == UiScenarioType.S3_CRASH_RECOVERY ? 2 : 3);
@@ -252,6 +256,9 @@ public class AgvFleetSimulatorApp extends Application {
 
             @Override
             public void onScenarioCompleted(UiScenarioResult result) {
+                if (autoDriver != null && autoDemoBtn != null && autoDemoBtn.isSelected()) {
+                    autoDriver.setEnabled(true);
+                }
                 Platform.runLater(() -> {
                     updateStepper(scenarioController.getTotalSteps(), scenarioController.getTotalSteps());
                     if (result.passed()) {
@@ -302,6 +309,19 @@ public class AgvFleetSimulatorApp extends Application {
 
         // 5. Initialize fleet
         initFleet();
+
+        autoDriver = new ContinuousTaskDriver(
+                () -> new ArrayList<>(robots),
+                () -> map,
+                t -> Platform.runLater(() -> allTasks.add(t)),
+                a -> {
+                    cnpVisualAnnouncerId = a.getNodeId();
+                    cnpVisualBids.clear();
+                    cnpVisualWinnerId = null;
+                    cnpVisualTimestamp = System.currentTimeMillis();
+                },
+                2500, 42L);
+        autoDriver.start();
 
         // 6. Start Render & Simulation loops
         startSimulationLoops();
@@ -388,9 +408,10 @@ public class AgvFleetSimulatorApp extends Application {
         controlGroup.getChildren().addAll(pauseFleetBtn, stepModeBtn, speedLabel, speedSlider, speedValLabel);
 
         // 3. Group: Demo tự động
-        autoDemoBtn = new ToggleButton("▶ Demo tự động");
-        autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
-        Tooltip.install(autoDemoBtn, new Tooltip("Tự động sinh nhiệm vụ mỗi 3-5s với người phát thầu ngẫu nhiên trong các xe sống"));
+        autoDemoBtn = new ToggleButton("⏹ Dừng Auto Demo");
+        autoDemoBtn.setSelected(true);
+        autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(autoDemoBtn, new Tooltip("Tự động sinh nhiệm vụ liên tục"));
         autoDemoBtn.setOnAction(e -> toggleAutoDemo());
 
         // 4. Group: Trình chiếu
@@ -587,6 +608,9 @@ public class AgvFleetSimulatorApp extends Application {
         scenarioBannerOverlay.hideBanner();
         scenarioBannerOverlay.hideVerdict();
         mapStatusBar.setText("Đã dừng kịch bản.");
+        if (autoDriver != null && autoDemoBtn != null && autoDemoBtn.isSelected()) {
+            autoDriver.setEnabled(true);
+        }
     }
 
     private void replayCurrentScenario() {
@@ -1773,12 +1797,14 @@ public class AgvFleetSimulatorApp extends Application {
     // 11. FLEET TELEMETRY & ROBOT CREATION
     // =========================================================================
     private void initFleet() {
-        createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Pallet AGV-Pro", 1.0);
-        createAndStartRobot(2L, new GridPoint(12, 6), 90.0, "Forklift AGV-Heavy", 1.1);
-        createAndStartRobot(3L, new GridPoint(22, 10), 85.0, "Tugger AGV-Fast", 0.9);
-        createAndStartRobot(4L, new GridPoint(4, 12), 80.0, "Unit-Load AGV", 1.0);
-        createAndStartRobot(5L, new GridPoint(18, 2), 75.0, "Compact AGV", 1.0);
-        nextNodeId.set(6);
+        map.setCellType(4, 12, CellType.EMPTY);
+        createAndStartRobot(1L, new GridPoint(2, 2), 95.0, "Pallet AGV-1", 1.0);
+        createAndStartRobot(2L, new GridPoint(8, 2), 80.0, "Forklift AGV-2", 1.0);
+        createAndStartRobot(3L, new GridPoint(14, 6), 65.0, "Tugger AGV-3", 1.0);
+        createAndStartRobot(4L, new GridPoint(20, 10), 50.0, "Unit-Load AGV-4", 1.0);
+        createAndStartRobot(5L, new GridPoint(4, 12), 40.0, "Compact AGV-5", 1.0);
+        createAndStartRobot(6L, new GridPoint(18, 14), 30.0, "Heavy Cargo AGV-6", 1.0);
+        nextNodeId.set(7);
     }
 
     private void stopAndClearFleet() {
@@ -2236,10 +2262,12 @@ public class AgvFleetSimulatorApp extends Application {
     private void toggleAutoDemo() {
         boolean active = autoDemoBtn.isSelected();
         autoDemoActive.set(active);
+        if (autoDriver != null) {
+            autoDriver.setEnabled(active);
+        }
         if (active) {
             autoDemoBtn.setText("⏹ Dừng Auto Demo");
             autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-            scheduleNextAutoDemoTask();
         } else {
             autoDemoBtn.setText("▶ Bắt đầu demo (Auto)");
             autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
@@ -2333,6 +2361,7 @@ public class AgvFleetSimulatorApp extends Application {
     private void shutdown() {
         log.info("Shutting down AGV Fleet Simulator...");
         autoDemoActive.set(false);
+        if (autoDriver != null) autoDriver.stop();
         if (autoDemoFuture != null) autoDemoFuture.cancel(false);
         backgroundScheduler.shutdownNow();
         if (renderLoop != null) renderLoop.stop();
