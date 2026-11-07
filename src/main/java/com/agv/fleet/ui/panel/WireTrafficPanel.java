@@ -7,13 +7,13 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
-import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
 
 import java.io.File;
@@ -25,10 +25,11 @@ import java.util.List;
  * <p>
  * Key Capabilities:
  * <ul>
- *   <li><b>Two-tier buffer:</b> Business messages by default, system rate counters, toggle checkbox.</li>
- *   <li><b>Optimized ListView:</b> Reusable CellFactory, append-only, auto-scroll at bottom, true pause freeze.</li>
- *   <li><b>Opcode Badges:</b> Standard color hierarchy (MUTEX_REQUEST amber, MUTEX_REPLY green, etc.).</li>
- *   <li><b>Click-to-Inspect Detail:</b> 36-byte binary header hex dump + field breakdown + decoded JSON payload.</li>
+ *   <li><b>Full height ListView:</b> Collapsible bottom drawer for details, default closed.</li>
+ *   <li><b>Informative Empty Placeholder:</b> Shows helpful prompt when empty.</li>
+ *   <li><b>Two-Row Filter & Control Bar:</b> Clear layout without text clipping.</li>
+ *   <li><b>Opcode Badges:</b> Standard color hierarchy.</li>
+ *   <li><b>Packet Inspector Drawer:</b> 36-byte binary header hex dump + field breakdown + decoded JSON payload.</li>
  * </ul>
  */
 public class WireTrafficPanel extends VBox {
@@ -42,15 +43,18 @@ public class WireTrafficPanel extends VBox {
     private final TextField searchTextField;
     private final CheckBox showSystemCheckBox;
     private final Button pauseResumeBtn;
+    private final Button clearBtn;
     private final Button exportCsvBtn;
     private final Label rowCountLabel;
     private final Label systemRatesLabel;
 
-    // Detail Panel Controls
+    // Collapsible Bottom Detail Drawer Controls
+    private final VBox detailDrawer;
     private final Label detailTitleLabel;
     private final TextArea hexDumpArea;
     private final TextArea headerBreakdownArea;
     private final TextArea payloadJsonArea;
+    private final Button closeDetailBtn;
 
     private int lastLoadedSize = 0;
 
@@ -60,9 +64,11 @@ public class WireTrafficPanel extends VBox {
         setPadding(new Insets(8));
         setStyle("-fx-background-color: #0F172A; -fx-border-color: #1E293B; -fx-border-width: 1px; -fx-border-radius: 8px; -fx-background-radius: 8px;");
 
-        // --- ROW 1: Filter & Action Bar ---
-        HBox filterBar = new HBox(6);
-        filterBar.setAlignment(Pos.CENTER_LEFT);
+        // =====================================================================
+        // FILTER BAR - ROW 1: Opcode, Node, Search Text
+        // =====================================================================
+        HBox filterBarRow1 = new HBox(6);
+        filterBarRow1.setAlignment(Pos.CENTER_LEFT);
 
         Label filterLbl = new Label("Opcode:");
         filterLbl.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 11px;");
@@ -74,20 +80,30 @@ public class WireTrafficPanel extends VBox {
         }
         opcodeFilterCombo.setValue("TẤT CẢ (ALL)");
         opcodeFilterCombo.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-size: 10px;");
-        Tooltip.install(opcodeFilterCombo, new Tooltip("Lọc theo mã Opcode"));
+        Tooltip.install(opcodeFilterCombo, new Tooltip("Lọc thông điệp theo mã Opcode"));
 
         Label nodeLbl = new Label("Node:");
         nodeLbl.setStyle("-fx-text-fill: #94A3B8; -fx-font-size: 11px;");
 
         nodeFilterField = new TextField();
         nodeFilterField.setPromptText("Node ID");
-        nodeFilterField.setPrefWidth(55);
+        nodeFilterField.setPrefWidth(60);
         nodeFilterField.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-size: 10px;");
+        Tooltip.install(nodeFilterField, new Tooltip("Lọc theo ID xe AGV phát hoặc nhận"));
 
         searchTextField = new TextField();
-        searchTextField.setPromptText("Tìm kiếm...");
-        searchTextField.setPrefWidth(90);
+        searchTextField.setPromptText("Tìm kiếm nội dung gói tin...");
         searchTextField.setStyle("-fx-background-color: #1E293B; -fx-text-fill: white; -fx-font-size: 10px;");
+        HBox.setHgrow(searchTextField, Priority.ALWAYS);
+        Tooltip.install(searchTextField, new Tooltip("Tìm kiếm từ khóa trong payload/chi tiết"));
+
+        filterBarRow1.getChildren().addAll(filterLbl, opcodeFilterCombo, nodeLbl, nodeFilterField, searchTextField);
+
+        // =====================================================================
+        // FILTER BAR - ROW 2: System Checkbox, Pause, Clear, Export, Row Counter
+        // =====================================================================
+        HBox filterBarRow2 = new HBox(6);
+        filterBarRow2.setAlignment(Pos.CENTER_LEFT);
 
         showSystemCheckBox = new CheckBox("Hiện tin hệ thống");
         showSystemCheckBox.setSelected(false);
@@ -97,21 +113,33 @@ public class WireTrafficPanel extends VBox {
         pauseResumeBtn = new Button("⏸ Tạm dừng");
         pauseResumeBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand; -fx-background-radius: 4px;");
         pauseResumeBtn.setOnAction(e -> togglePause());
+        Tooltip.install(pauseResumeBtn, new Tooltip("Đóng băng cập nhật bảng để tiện soi thông điệp"));
 
-        exportCsvBtn = new Button("📥 CSV");
+        clearBtn = new Button("🗑 Xóa");
+        clearBtn.setStyle("-fx-background-color: #475569; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand; -fx-background-radius: 4px;");
+        clearBtn.setOnAction(e -> {
+            trafficLog.clear();
+            closeDrawer();
+            forceFullReload();
+        });
+        Tooltip.install(clearBtn, new Tooltip("Xóa toàn bộ nhật ký gói tin Wire"));
+
+        exportCsvBtn = new Button("📥 Xuất CSV");
         exportCsvBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand; -fx-background-radius: 4px;");
         exportCsvBtn.setOnAction(e -> handleExportCsv());
+        Tooltip.install(exportCsvBtn, new Tooltip("Xuất toàn bộ bản ghi ra tệp tin CSV"));
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Region row2Spacer = new Region();
+        HBox.setHgrow(row2Spacer, Priority.ALWAYS);
 
-        rowCountLabel = new Label("0 dòng");
-        rowCountLabel.setStyle("-fx-text-fill: #64748B; -fx-font-size: 10px; -fx-font-weight: bold;");
+        rowCountLabel = new Label("0 / 0 dòng");
+        rowCountLabel.setStyle("-fx-text-fill: #38BDF8; -fx-font-size: 10px; -fx-font-weight: bold;");
 
-        filterBar.getChildren().addAll(filterLbl, opcodeFilterCombo, nodeLbl, nodeFilterField, searchTextField,
-                showSystemCheckBox, pauseResumeBtn, exportCsvBtn, spacer, rowCountLabel);
+        filterBarRow2.getChildren().addAll(showSystemCheckBox, pauseResumeBtn, clearBtn, exportCsvBtn, row2Spacer, rowCountLabel);
 
-        // --- ROW 2: System Message Rate Strip ---
+        // =====================================================================
+        // ROW 3: System Message Rate Strip
+        // =====================================================================
         HBox systemRateBar = new HBox(6);
         systemRateBar.setAlignment(Pos.CENTER_LEFT);
         systemRateBar.setStyle("-fx-background-color: #1E293B; -fx-padding: 3 8 3 8; -fx-background-radius: 4px;");
@@ -124,35 +152,58 @@ public class WireTrafficPanel extends VBox {
 
         systemRateBar.getChildren().addAll(rateIcon, systemRatesLabel);
 
-        // --- ROW 3: Master-Detail SplitPane ---
-        SplitPane splitPane = new SplitPane();
-        splitPane.setOrientation(Orientation.VERTICAL);
-        splitPane.setStyle("-fx-background-color: transparent; -fx-padding: 0;");
-        VBox.setVgrow(splitPane, Priority.ALWAYS);
-
-        // --- Master ListView ---
+        // =====================================================================
+        // MAIN TABLE: Full-height ListView with Empty Placeholder
+        // =====================================================================
         listView = new ListView<>(listData);
         listView.setStyle("-fx-background-color: #111827; -fx-border-color: #1E293B; -fx-border-radius: 4px;");
         listView.setCellFactory(lv -> new WireTrafficCell());
+        VBox.setVgrow(listView, Priority.ALWAYS);
 
-        // --- Detail Panel ---
-        VBox detailBox = new VBox(4);
-        detailBox.setPadding(new Insets(6));
-        detailBox.setStyle("-fx-background-color: #090D16; -fx-border-color: #1E293B; -fx-border-radius: 4px;");
+        Label emptyPlaceholder = new Label("Chưa có thông điệp nghiệp vụ.\nHãy bấm 'Nhiệm vụ ngẫu nhiên' hoặc chạy một kịch bản");
+        emptyPlaceholder.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 11));
+        emptyPlaceholder.setTextFill(Color.web("#64748B"));
+        emptyPlaceholder.setTextAlignment(TextAlignment.CENTER);
+        emptyPlaceholder.setAlignment(Pos.CENTER);
+        listView.setPlaceholder(emptyPlaceholder);
 
-        detailTitleLabel = new Label("🔍 CHI TIẾT GÓI TIN (Bấm vào 1 dòng ở trên để inspect)");
+        // =====================================================================
+        // COLLAPSIBLE BOTTOM DRAWER: Default closed, opens on row click
+        // =====================================================================
+        detailDrawer = new VBox(4);
+        detailDrawer.setPadding(new Insets(6));
+        detailDrawer.setStyle("-fx-background-color: #090D16; -fx-border-color: #1E293B; -fx-border-width: 1px 0 0 0;");
+        detailDrawer.setPrefHeight(160);
+        detailDrawer.setMaxHeight(220);
+        detailDrawer.setVisible(false);
+        detailDrawer.setManaged(false);
+
+        HBox drawerHeader = new HBox(6);
+        drawerHeader.setAlignment(Pos.CENTER_LEFT);
+
+        detailTitleLabel = new Label("🔍 CHI TIẾT GÓI TIN");
         detailTitleLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10));
         detailTitleLabel.setTextFill(Color.web("#38BDF8"));
 
-        Label hexTitle = new Label("Raw Header (36 Bytes Hex):");
+        Region drawerSpacer = new Region();
+        HBox.setHgrow(drawerSpacer, Priority.ALWAYS);
+
+        closeDetailBtn = new Button("✕ Đóng");
+        closeDetailBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: #E2E8F0; -fx-font-size: 9.5px; -fx-padding: 2 6 2 6; -fx-cursor: hand; -fx-background-radius: 3px;");
+        closeDetailBtn.setOnAction(e -> closeDrawer());
+        Tooltip.install(closeDetailBtn, new Tooltip("Thu gọn ngăn kéo chi tiết"));
+
+        drawerHeader.getChildren().addAll(detailTitleLabel, drawerSpacer, closeDetailBtn);
+
+        Label hexTitle = new Label("Raw Binary Header (36 Bytes Hex):");
         hexTitle.setStyle("-fx-text-fill: #64748B; -fx-font-size: 9px; -fx-font-weight: bold;");
 
         hexDumpArea = new TextArea();
         hexDumpArea.setEditable(false);
         hexDumpArea.setPrefRowCount(2);
-        hexDumpArea.setStyle("-fx-control-inner-background: #0B1120; -fx-text-fill: #F59E0B; -fx-font-family: monospace; -fx-font-size: 10px;");
+        hexDumpArea.setStyle("-fx-control-inner-background: #0B1120; -fx-text-fill: #F59E0B; -fx-font-family: monospace; -fx-font-size: 9.5px;");
 
-        Label breakdownTitle = new Label("Header Fields & Payload JSON:");
+        Label breakdownTitle = new Label("Header Breakdown & Decoded Payload JSON:");
         breakdownTitle.setStyle("-fx-text-fill: #64748B; -fx-font-size: 9px; -fx-font-weight: bold;");
 
         HBox detailColumns = new HBox(6);
@@ -160,34 +211,25 @@ public class WireTrafficPanel extends VBox {
 
         headerBreakdownArea = new TextArea();
         headerBreakdownArea.setEditable(false);
-        headerBreakdownArea.setPrefRowCount(6);
+        headerBreakdownArea.setPrefRowCount(4);
         headerBreakdownArea.setPromptText("Header breakdown...");
         headerBreakdownArea.setStyle("-fx-control-inner-background: #0B1120; -fx-text-fill: #94A3B8; -fx-font-family: monospace; -fx-font-size: 9.5px;");
         HBox.setHgrow(headerBreakdownArea, Priority.ALWAYS);
 
         payloadJsonArea = new TextArea();
         payloadJsonArea.setEditable(false);
-        payloadJsonArea.setPrefRowCount(6);
+        payloadJsonArea.setPrefRowCount(4);
         payloadJsonArea.setPromptText("Decoded Payload JSON...");
         payloadJsonArea.setStyle("-fx-control-inner-background: #0B1120; -fx-text-fill: #34D399; -fx-font-family: monospace; -fx-font-size: 9.5px;");
         HBox.setHgrow(payloadJsonArea, Priority.ALWAYS);
 
         detailColumns.getChildren().addAll(headerBreakdownArea, payloadJsonArea);
-        detailBox.getChildren().addAll(detailTitleLabel, hexTitle, hexDumpArea, breakdownTitle, detailColumns);
+        detailDrawer.getChildren().addAll(drawerHeader, hexTitle, hexDumpArea, breakdownTitle, detailColumns);
 
-        splitPane.getItems().addAll(listView, detailBox);
-        splitPane.setDividerPositions(0.65);
-
-        // Listen for item selection to populate details
+        // Listen for item selection to open drawer and populate details
         listView.getSelectionModel().selectedItemProperty().addListener((obs, oldV, entry) -> {
             if (entry != null) {
-                detailTitleLabel.setText(String.format("🔍 PACKET INSPECTION: %s [%s] (Lamport=%d)",
-                        entry.opcode() != null ? entry.opcode().name() : "UNKNOWN",
-                        entry.getRouteString(),
-                        entry.lamportTimestamp()));
-                hexDumpArea.setText(entry.toHexDump());
-                headerBreakdownArea.setText(entry.getHeaderExplanation());
-                payloadJsonArea.setText(entry.getDecodedPayloadJson());
+                openDrawer(entry);
             }
         });
 
@@ -197,7 +239,26 @@ public class WireTrafficPanel extends VBox {
         searchTextField.textProperty().addListener((obs, oldV, newV) -> forceFullReload());
         showSystemCheckBox.setOnAction(e -> forceFullReload());
 
-        getChildren().addAll(filterBar, systemRateBar, splitPane);
+        getChildren().addAll(filterBarRow1, filterBarRow2, systemRateBar, listView, detailDrawer);
+    }
+
+    private void openDrawer(WireMessageEntry entry) {
+        detailTitleLabel.setText(String.format("🔍 PACKET INSPECTION: %s [%s] (Lamport=%d)",
+                entry.opcode() != null ? entry.opcode().name() : "UNKNOWN",
+                entry.getRouteString(),
+                entry.lamportTimestamp()));
+        hexDumpArea.setText(entry.toHexDump());
+        headerBreakdownArea.setText(entry.getHeaderExplanation());
+        payloadJsonArea.setText(entry.getDecodedPayloadJson());
+
+        detailDrawer.setVisible(true);
+        detailDrawer.setManaged(true);
+    }
+
+    private void closeDrawer() {
+        detailDrawer.setVisible(false);
+        detailDrawer.setManaged(false);
+        listView.getSelectionModel().clearSelection();
     }
 
     private void togglePause() {
@@ -281,6 +342,7 @@ public class WireTrafficPanel extends VBox {
 
         List<WireMessageEntry> filtered = trafficLog.getFilteredEntries(opFilter, nodeFilter, showSystem, searchText);
         int currentSize = filtered.size();
+        int totalSize = trafficLog.size();
 
         boolean atBottom = isScrollAtBottom();
 
@@ -294,7 +356,7 @@ public class WireTrafficPanel extends VBox {
         }
         lastLoadedSize = currentSize;
 
-        rowCountLabel.setText(currentSize + " dòng");
+        rowCountLabel.setText(currentSize + " / " + totalSize + " dòng");
 
         if (atBottom && !listData.isEmpty()) {
             listView.scrollTo(listData.size() - 1);

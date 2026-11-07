@@ -16,12 +16,17 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class UiScenarioController {
 
+    public static final long SCENARIO_TIMEOUT_MS = 30_000L;
+
     private final List<UiScenarioListener> listeners = new CopyOnWriteArrayList<>();
     private final FleetMetricsCollector metricsCollector;
 
     private volatile UiScenarioType activeScenario = null;
     private volatile boolean running = false;
     private volatile int s1VehicleCount = 2; // 2, 4, or 8
+    private volatile int currentStep = 1;
+    private volatile int totalSteps = 3;
+    private volatile long scenarioStartTimeMs = 0;
 
     public UiScenarioController(FleetMetricsCollector metricsCollector) {
         this.metricsCollector = Objects.requireNonNull(metricsCollector, "metricsCollector cannot be null");
@@ -55,10 +60,34 @@ public class UiScenarioController {
         return activeScenario;
     }
 
+    public int getCurrentStep() {
+        return currentStep;
+    }
+
+    public int getTotalSteps() {
+        return totalSteps;
+    }
+
+    public long getScenarioStartTimeMs() {
+        return scenarioStartTimeMs;
+    }
+
+    public long getElapsedMs() {
+        if (!running || scenarioStartTimeMs <= 0) return 0;
+        return System.currentTimeMillis() - scenarioStartTimeMs;
+    }
+
+    public boolean isTimedOut() {
+        return running && getElapsedMs() >= SCENARIO_TIMEOUT_MS;
+    }
+
     public void startS1Scenario(int vehicleCount) {
         this.s1VehicleCount = vehicleCount;
         this.activeScenario = UiScenarioType.S1_HEAD_ON_INTERSECTION;
         this.running = true;
+        this.currentStep = 1;
+        this.totalSteps = 3;
+        this.scenarioStartTimeMs = System.currentTimeMillis();
 
         metricsCollector.reset();
 
@@ -100,6 +129,9 @@ public class UiScenarioController {
     public void startS2Scenario() {
         this.activeScenario = UiScenarioType.S2_ADAPTIVE_AUCTION;
         this.running = true;
+        this.currentStep = 1;
+        this.totalSteps = 3;
+        this.scenarioStartTimeMs = System.currentTimeMillis();
 
         metricsCollector.reset();
 
@@ -149,6 +181,9 @@ public class UiScenarioController {
     public void startS3Scenario(String variantName) {
         this.activeScenario = UiScenarioType.S3_CRASH_RECOVERY;
         this.running = true;
+        this.currentStep = 1;
+        this.totalSteps = 2;
+        this.scenarioStartTimeMs = System.currentTimeMillis();
 
         metricsCollector.reset();
 
@@ -182,6 +217,35 @@ public class UiScenarioController {
         return result;
     }
 
+    public UiScenarioResult finishWithResult(UiScenarioResult result) {
+        this.running = false;
+        notifyCompleted(result);
+        return result;
+    }
+
+    public UiScenarioResult failWithTimeout(String blockedDetails) {
+        this.running = false;
+        String summary = String.format("THẤT BẠI (FAIL): Quá thời gian 30s tại bước %d/%d. %s",
+                currentStep, totalSteps, blockedDetails != null ? blockedDetails : "");
+
+        Map<String, Object> extra = new HashMap<>();
+        extra.put("timeout", true);
+        extra.put("step", currentStep);
+        extra.put("totalSteps", totalSteps);
+
+        UiScenarioResult result = new UiScenarioResult(
+                activeScenario != null ? activeScenario : UiScenarioType.S1_HEAD_ON_INTERSECTION,
+                false,
+                summary,
+                metricsCollector.getGroundTruthCollisions(),
+                metricsCollector.getAverageMutexWaitTimeMs(),
+                0,
+                extra
+        );
+        notifyCompleted(result);
+        return result;
+    }
+
     public void cancelCurrentScenario() {
         this.running = false;
         this.activeScenario = null;
@@ -195,7 +259,9 @@ public class UiScenarioController {
         }
     }
 
-    private void notifyStep(int step, int totalSteps, String banner) {
+    public void notifyStep(int step, int totalSteps, String banner) {
+        this.currentStep = step;
+        this.totalSteps = totalSteps;
         for (UiScenarioListener l : listeners) {
             try {
                 l.onStepUpdated(step, totalSteps, banner);
