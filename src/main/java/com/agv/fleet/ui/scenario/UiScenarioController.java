@@ -77,6 +77,10 @@ public class UiScenarioController {
         return System.currentTimeMillis() - scenarioStartTimeMs;
     }
 
+    public double getElapsedSeconds() {
+        return getElapsedMs() / 1000.0;
+    }
+
     public boolean isTimedOut() {
         return running && getElapsedMs() >= SCENARIO_TIMEOUT_MS;
     }

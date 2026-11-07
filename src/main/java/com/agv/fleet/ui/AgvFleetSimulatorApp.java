@@ -167,7 +167,7 @@ public class AgvFleetSimulatorApp extends Application {
     // Presentation Mode & Main Layout
     private Stage primaryStage;
     private BorderPane rootPane;
-    private Node rightSidebarNode;
+    private Region rightSidebarNode;
     private StackPane canvasWrapper;
     private Canvas canvas;
     private VBox telemetryList;
@@ -194,6 +194,7 @@ public class AgvFleetSimulatorApp extends Application {
     // Scenario Status Bar (On Top of Canvas)
     private HBox scenarioStatusBar;
     private Label scenarioStatusTitle;
+    private HBox scenarioStepperBox;
     private Label step1Pill;
     private Label step2Pill;
     private Label step3Pill;
@@ -675,7 +676,7 @@ public class AgvFleetSimulatorApp extends Application {
     // =========================================================================
     // 3. RIGHT TABBED ENTERPRISE SIDEBAR
     // =========================================================================
-    private Node createRightTabbedSidebar() {
+    private Region createRightTabbedSidebar() {
         TabPane tabPane = new TabPane();
         tabPane.setPrefWidth(480);
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
@@ -1246,7 +1247,6 @@ public class AgvFleetSimulatorApp extends Application {
                         });
                     }
                 }
-            }
             }
         } catch (Exception e) {
             log.error("Error in physics simulation tick", e);
@@ -2261,6 +2261,10 @@ public class AgvFleetSimulatorApp extends Application {
                 }
             });
         }, delayMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void triggerRandomTaskAnnouncement() {
+        spawnRandomTask();
     }
 
     private void spawnRandomTask() {
