@@ -213,19 +213,15 @@ public class AgvFleetSimulatorApp extends Application {
         // 4. Bottom: Enterprise Actions Bar
         rootPane.setBottom(createEnterpriseControlBar());
 
-        Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
-        double prefWidth = Math.min(1280, visualBounds.getWidth() * 0.96);
-        double prefHeight = Math.min(680, visualBounds.getHeight() * 0.88);
-
-        Scene scene = new Scene(rootPane, prefWidth, prefHeight);
+        Scene scene = new Scene(rootPane);
 
         // Register Keyboard Shortcuts for Presentation Mode
         setupKeyboardShortcuts(scene);
 
         primaryStage.setScene(scene);
-        primaryStage.setMaxHeight(visualBounds.getHeight());
-        primaryStage.setMaxWidth(visualBounds.getWidth());
-        primaryStage.centerOnScreen();
+        primaryStage.setMinWidth(1100);
+        primaryStage.setMinHeight(650);
+        primaryStage.setMaximized(true);
         primaryStage.show();
 
         // 5. Initialize fleet
