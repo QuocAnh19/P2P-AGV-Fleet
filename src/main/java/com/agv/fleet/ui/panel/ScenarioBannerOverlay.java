@@ -45,7 +45,7 @@ public class ScenarioBannerOverlay extends StackPane {
         topBannerBox.setMaxWidth(560);
         topBannerBox.setMaxHeight(Region.USE_PREF_SIZE);
         topBannerBox.setPickOnBounds(false);
-        topBannerBox.setStyle("-fx-background-color: rgba(30, 41, 59, 0.88); -fx-border-color: #38BDF8; -fx-border-width: 1.5px; -fx-border-radius: 8px; -fx-background-radius: 8px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.5), 10, 0, 0, 3);");
+        topBannerBox.setStyle("-fx-background-color: #0F172ACC; -fx-border-color: #38BDF8; -fx-border-width: 1.5px; -fx-border-radius: 8px; -fx-background-radius: 8px; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.5), 10, 0, 0, 3);");
         topBannerBox.setVisible(false);
 
         scenarioTitleLabel = new Label("SCENARIO BANNER");
@@ -110,9 +110,9 @@ public class ScenarioBannerOverlay extends StackPane {
         StackPane.setAlignment(topBannerBox, Pos.TOP_CENTER);
         StackPane.setMargin(topBannerBox, new Insets(8, 0, 0, 0));
 
-        // Place at Bottom-Right
+        // Place at Bottom-Right with 12px margin
         StackPane.setAlignment(verdictOverlayCard, Pos.BOTTOM_RIGHT);
-        StackPane.setMargin(verdictOverlayCard, new Insets(0, 16, 16, 0));
+        StackPane.setMargin(verdictOverlayCard, new Insets(0, 12, 12, 0));
 
         getChildren().addAll(topBannerBox, verdictOverlayCard);
     }
