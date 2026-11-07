@@ -13,6 +13,7 @@ import com.agv.fleet.core.map.GridMap;
 import com.agv.fleet.core.map.GridPoint;
 import com.agv.fleet.core.navigation.DynamicAStarPathfinder;
 import com.agv.fleet.distributed.auction.AuctionSession;
+import com.agv.fleet.distributed.auction.CnpEngine;
 import com.agv.fleet.distributed.mutex.MutexState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -387,9 +388,19 @@ public class ScenarioRunner {
                         .multicastPort(multicastPort)
                         .initialBattery(initialBatteries[i])
                         .initialPosition(initialPositions[i])
-                        .auctionTimeoutMs(350)
+                        .auctionTimeoutMs(450)
                         .mapDiagonal(14.14)
                         .build();
+                final AgvNode fAnnouncer = announcer;
+                bidder.addCnpEventListener(new CnpEngine.CnpEventListener() {
+                    @Override
+                    public void onTaskWon(Task t) {
+                        bidder.getBattery().consume(1.0);
+                        bidder.setPosition(new Position2D(t.getDeliveryX(), t.getDeliveryY()));
+                        bidder.notifyTaskComplete(t.getTaskId(), fAnnouncer.getNodeId());
+                        bidder.setAgentState(AgentState.IDLE);
+                    }
+                });
                 bidder.start();
                 nodes.add(bidder);
             }
@@ -412,6 +423,14 @@ public class ScenarioRunner {
             Random taskRnd = new Random(42);
 
             for (int t = 1; t <= 50; t++) {
+                // Ensure all healthy bidders are IDLE before announcing
+                waitUntil(() -> {
+                    for (int n = 0; n < 4; n++) {
+                        if (nodes.get(n).getAgentState() != AgentState.IDLE) return false;
+                    }
+                    return true;
+                }, 1000);
+
                 String taskId = String.format("TASK-%02d", t);
                 double px = 1 + taskRnd.nextInt(9);
                 double py = 1 + taskRnd.nextInt(9);
@@ -422,7 +441,10 @@ public class ScenarioRunner {
                 AuctionSession session = announcer.announceTask(task);
 
                 // Wait for auction resolution
-                waitUntil(session::isClosed, 3000);
+                waitUntil(() -> task.getAssignedNodeId() != null || session.isClosed(), 3000);
+                if (task.getAssignedNodeId() == null) {
+                    waitUntil(() -> task.getAssignedNodeId() != null, 200);
+                }
 
                 Long winnerNodeId = task.getAssignedNodeId();
                 TaskBidPayload winningBid = session.getBids().stream()
@@ -439,10 +461,7 @@ public class ScenarioRunner {
                     winnerBattery = winnerNode.getBattery().getLevel();
                     winnerStr = "AGV " + winnerNodeId;
 
-                    // Simulate task execution and battery expenditure
-                    winnerNode.getBattery().consume(1.0);
-                    winnerNode.setPosition(new Position2D(dx, dy));
-                    winnerNode.notifyTaskComplete(taskId, announcer.getNodeId());
+                    // Ensure task completion handshake finishes
                     winnerNode.setAgentState(AgentState.IDLE);
                     waitUntil(() -> task.getStatus() == Task.Status.COMPLETED, 1000);
                 } else {
