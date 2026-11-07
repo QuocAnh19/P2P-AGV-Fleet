@@ -1137,8 +1137,17 @@ public class AgvFleetSimulatorApp extends Application {
         physicsController.restartPhysicsLoop();
 
         renderLoop = new AnimationTimer() {
+            private long lastNano = 0;
+
             @Override
             public void handle(long now) {
+                if (lastNano > 0) {
+                    double deltaSec = Math.min(0.1, (now - lastNano) / 1_000_000_000.0);
+                    for (AgvRobot robot : robots) {
+                        robot.interpolateVisualPosition(deltaSec);
+                    }
+                }
+                lastNano = now;
                 renderCanvas();
             }
         };
