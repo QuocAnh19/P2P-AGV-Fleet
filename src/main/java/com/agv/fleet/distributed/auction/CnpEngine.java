@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -42,9 +43,10 @@ public class CnpEngine {
     public static final long DEFAULT_AUCTION_TIMEOUT_MS = 500;
     public static final double DEFAULT_MAINTENANCE_WEIGHT = 1.0;
     public static final double DEFAULT_MAP_DIAGONAL = 30.0;
-    public static final double DISTANCE_WEIGHT = 0.5;
-    public static final double BATTERY_WEIGHT = 0.3;
-    public static final double MAINTENANCE_WEIGHT_FACTOR = 0.2;
+    public static final double DISTANCE_WEIGHT = 0.45;
+    public static final double BATTERY_WEIGHT = 0.25;
+    public static final double LOAD_WEIGHT = 0.30;
+    public static final double MAINTENANCE_WEIGHT_FACTOR = 0.0;
     public static final double PENDING_TASK_PENALTY = 0.2;
 
     private final long thisNodeId;
@@ -62,7 +64,9 @@ public class CnpEngine {
     private final double maintenanceWeight;
     private volatile boolean allowSelfBidding = false;
     private volatile double mapDiagonal = DEFAULT_MAP_DIAGONAL;
+    private volatile double mapSpan = 40.0; // mapWidth + mapHeight default (24 + 16 = 40)
     private volatile Supplier<Boolean> hasPendingTaskSupplier;
+    private final Deque<Long> acceptedTaskTimestamps = new ConcurrentLinkedDeque<>();
 
     private final ConcurrentMap<String, AuctionSession> activeAuctions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, TaskAnnouncePayload> observedTasks = new ConcurrentHashMap<>();
@@ -187,6 +191,49 @@ public class CnpEngine {
         this.mapDiagonal = mapDiagonal > 0 ? mapDiagonal : DEFAULT_MAP_DIAGONAL;
     }
 
+    public void setMapDimensions(int width, int height) {
+        if (width > 0 && height > 0) {
+            this.mapSpan = width + height;
+        }
+    }
+
+    public double getMapSpan() {
+        return mapSpan;
+    }
+
+    public void setMapSpan(double mapSpan) {
+        this.mapSpan = mapSpan > 0 ? mapSpan : 40.0;
+    }
+
+    public void recordTaskAccepted() {
+        acceptedTaskTimestamps.addLast(System.currentTimeMillis());
+    }
+
+    public int getRecentAcceptedTaskCount() {
+        long windowStart = System.currentTimeMillis() - 60_000L;
+        while (!acceptedTaskTimestamps.isEmpty() && acceptedTaskTimestamps.peekFirst() < windowStart) {
+            acceptedTaskTimestamps.pollFirst();
+        }
+        return acceptedTaskTimestamps.size();
+    }
+
+    public boolean isEligibleToBid() {
+        return batterySupplier.get() > AgvBattery.LOW_BATTERY_THRESHOLD
+                && stateSupplier.get() == AgentState.IDLE;
+    }
+
+    public double computeBidCost(double pickupX, double pickupY) {
+        double battery = batterySupplier.get();
+        Position2D pos = positionSupplier.get();
+        double dist = Math.abs(pickupX - pos.x()) + Math.abs(pickupY - pos.y());
+        double divisor = (mapSpan > 0) ? mapSpan : (mapDiagonal > 0 ? mapDiagonal : DEFAULT_MAP_DIAGONAL);
+        double normDist = Math.clamp(dist / divisor, 0.0, 1.0);
+        double normBattery = Math.clamp((100.0 - battery) / 100.0, 0.0, 1.0);
+        int recentTasks = getRecentAcceptedTaskCount();
+        double costLoad = Math.min(1.0, recentTasks / 3.0);
+        return DISTANCE_WEIGHT * normDist + BATTERY_WEIGHT * normBattery + LOAD_WEIGHT * costLoad;
+    }
+
     public Supplier<Boolean> getHasPendingTaskSupplier() {
         return hasPendingTaskSupplier;
     }
@@ -282,19 +329,11 @@ public class CnpEngine {
             return;
         }
 
-        // 3. Compute normalized cost function:
-        // - dist / mapDiagonal in [0, 1]
-        // - (100.0 - battery) / 100.0 in [0, 1]
-        // - maintenance history in [0, 1]
-        // cost = 0.5 * normDist + 0.3 * normBattery + 0.2 * normMaint + (hasPendingTask ? 0.2 : 0.0)
+        // 3. Compute normalized multi-criteria cost function:
+        // cost = 0.45 * costDist + 0.25 * costBattery + 0.30 * costLoad
         Position2D pos = positionSupplier.get();
-        double dist = Math.hypot(payload.pickupX() - pos.x(), payload.pickupY() - pos.y());
-        double normDist = Math.clamp(dist / mapDiagonal, 0.0, 1.0);
-        double normBattery = Math.clamp((100.0 - battery) / 100.0, 0.0, 1.0);
-        double normMaintenance = Math.clamp(maintenanceWeight <= 1.0 ? maintenanceWeight : (maintenanceWeight / 10.0), 0.0, 1.0);
-        boolean hasPending = (hasPendingTaskSupplier != null && Boolean.TRUE.equals(hasPendingTaskSupplier.get()));
-        double pendingPenalty = hasPending ? PENDING_TASK_PENALTY : 0.0;
-        double cost = DISTANCE_WEIGHT * normDist + BATTERY_WEIGHT * normBattery + MAINTENANCE_WEIGHT_FACTOR * normMaintenance + pendingPenalty;
+        double dist = Math.abs(payload.pickupX() - pos.x()) + Math.abs(payload.pickupY() - pos.y());
+        double cost = computeBidCost(payload.pickupX(), payload.pickupY());
 
         // 4. Transition to BIDDING and submit TASK_BID (unicast to remote peer, or dispatch local if self)
         stateConsumer.accept(AgentState.BIDDING);
@@ -449,6 +488,7 @@ public class CnpEngine {
 
         if (winnerNodeId == thisNodeId) {
             // This AGV won the task!
+            recordTaskAccepted();
             stateConsumer.accept(AgentState.BUSY);
 
             TaskAnnouncePayload announce = observedTasks.get(taskId);
