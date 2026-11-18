@@ -22,11 +22,12 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Bộ phát việc liên tục cho chế độ demo.
+ * Bộ phát việc cho chế độ demo / thử nghiệm phân tán (hỗ trợ cả chạy liên tục lẫn chạy 1 chu kỳ).
  *
- * Cứ mỗi {@code periodMs} ms, nếu còn xe rảnh và chưa có phiên đấu thầu nào đang chờ,
- * bộ này tạo 1 đơn hàng ngẫu nhiên và cho một xe NGẪU NHIÊN làm người phát thầu (CNP).
- * Nhờ vậy đội xe luôn có việc: xe chạy -> giao hàng -> pin yếu thì tự về sạc -> quay lại làm việc.
+ * - Chế độ 1 chu kỳ (Single Cycle Mode): Phát đúng 1 mục tiêu (Task) qua đấu thầu CNP,
+ *   theo dõi xe thực hiện giao hàng đến khi HOÀN THÀNH (COMPLETED), sau đó tự động dừng lại
+ *   và kích hoạt callback để người dùng có thể quan sát, phân tích gói tin P2P.
+ * - Chế độ liên tục (Continuous Mode): Lặp lại phát thầu khi có xe rảnh để duy trì hoạt động đội xe.
  *
  * Bộ này chỉ gọi API công khai của AgvRobot/AgvNode, không đụng tới JavaFX. Việc cập nhật
  * giao diện đi qua các callback do lớp UI truyền vào.
@@ -43,11 +44,13 @@ public final class ContinuousTaskDriver {
     private final Supplier<GridMap> mapSupplier;
     private final Consumer<Task> taskRegistrar;
     private final Consumer<AgvRobot> announcerListener;
+    private final Consumer<Task> cycleCompleteListener;
     private final long periodMs;
     private final Random random;
     private final AtomicInteger taskCounter = new AtomicInteger(5000);
+    private final AtomicInteger completedCycleCount = new AtomicInteger(0);
 
-    /** Chỉ được truy cập từ thread của scheduler. */
+    /** Chỉ được truy cập từ thread của scheduler hoặc phương thức synchronized. */
     private final Map<Task, Long> inFlight = new HashMap<>();
 
     private final ScheduledExecutorService executor =
@@ -60,23 +63,34 @@ public final class ContinuousTaskDriver {
     private volatile boolean enabled = true;
 
     /**
-     * @param robotsSupplier    trả về bản chụp danh sách xe hiện tại (nên là new ArrayList<>(robots))
-     * @param mapSupplier       trả về bản đồ hiện tại
-     * @param taskRegistrar     đăng ký đơn vào danh sách đơn của UI (nhớ bọc Platform.runLater)
-     * @param announcerListener báo cho UI biết xe nào vừa phát thầu (để vẽ hiệu ứng), có thể là null
-     * @param periodMs          chu kỳ kiểm tra, ví dụ 2500
-     * @param seed              seed ngẫu nhiên để demo lặp lại được
+     * Số chu kỳ còn lại cần chạy:
+     * -1: Chạy liên tục không giới hạn (Continuous Mode)
+     *  0: Đã hoàn tất hoặc đang dừng (không phát thêm task mới)
+     * >0: Chạy đúng số chu kỳ chỉ định (ví dụ = 1: Single Cycle Mode)
      */
+    private volatile int remainingCycles = -1;
+
     public ContinuousTaskDriver(Supplier<List<AgvRobot>> robotsSupplier,
                                 Supplier<GridMap> mapSupplier,
                                 Consumer<Task> taskRegistrar,
                                 Consumer<AgvRobot> announcerListener,
                                 long periodMs,
                                 long seed) {
+        this(robotsSupplier, mapSupplier, taskRegistrar, announcerListener, null, periodMs, seed);
+    }
+
+    public ContinuousTaskDriver(Supplier<List<AgvRobot>> robotsSupplier,
+                                Supplier<GridMap> mapSupplier,
+                                Consumer<Task> taskRegistrar,
+                                Consumer<AgvRobot> announcerListener,
+                                Consumer<Task> cycleCompleteListener,
+                                long periodMs,
+                                long seed) {
         this.robotsSupplier = robotsSupplier;
         this.mapSupplier = mapSupplier;
         this.taskRegistrar = taskRegistrar;
         this.announcerListener = announcerListener;
+        this.cycleCompleteListener = cycleCompleteListener;
         this.periodMs = Math.max(500, periodMs);
         this.random = new Random(seed);
     }
@@ -86,7 +100,7 @@ public final class ContinuousTaskDriver {
             return;
         }
         future = executor.scheduleWithFixedDelay(this::safeTick, periodMs, periodMs, TimeUnit.MILLISECONDS);
-        log.info("ContinuousTaskDriver started (period={} ms)", periodMs);
+        log.info("ContinuousTaskDriver started (period={} ms, remainingCycles={})", periodMs, remainingCycles);
     }
 
     public synchronized void stop() {
@@ -107,6 +121,48 @@ public final class ContinuousTaskDriver {
         return enabled;
     }
 
+    public void setRemainingCycles(int cycles) {
+        this.remainingCycles = cycles;
+        if (cycles != 0) {
+            this.enabled = true;
+        }
+        log.info("ContinuousTaskDriver setRemainingCycles={}", cycles);
+    }
+
+    public int getRemainingCycles() {
+        return remainingCycles;
+    }
+
+    public void setContinuous(boolean continuous) {
+        if (continuous) {
+            this.remainingCycles = -1;
+            this.enabled = true;
+            executor.execute(this::safeTick);
+        } else {
+            this.remainingCycles = 0;
+            this.enabled = false;
+        }
+        log.info("ContinuousTaskDriver setContinuous={}, enabled={}", continuous, enabled);
+    }
+
+    public boolean isContinuous() {
+        return remainingCycles < 0;
+    }
+
+    public int getCompletedCycleCount() {
+        return completedCycleCount.get();
+    }
+
+    /**
+     * Kích hoạt chạy đúng 1 chu kỳ mục tiêu: phát 1 đơn hàng -> chờ hoàn thành -> dừng lại.
+     */
+    public synchronized void triggerSingleCycle() {
+        this.remainingCycles = 1;
+        this.enabled = true;
+        log.info("ContinuousTaskDriver: Triggered single cycle mode (1 cycle). Executing tick now...");
+        executor.execute(this::safeTick);
+    }
+
     private void safeTick() {
         try {
             tick();
@@ -116,18 +172,9 @@ public final class ContinuousTaskDriver {
         }
     }
 
-    private void tick() {
+    private synchronized void tick() {
         if (!enabled) {
             return;
-        }
-        List<AgvRobot> alive = new ArrayList<>();
-        for (AgvRobot r : robotsSupplier.get()) {
-            if (!r.isCrashed()) {
-                alive.add(r);
-            }
-        }
-        if (alive.size() < 2) {
-            return; // cần ít nhất 1 người phát thầu và 1 người nhận việc
         }
 
         long now = System.currentTimeMillis();
@@ -140,8 +187,30 @@ public final class ContinuousTaskDriver {
                     || st == Task.Status.CANCELLED
                     || st == Task.Status.FAILED;
             boolean pending = st == Task.Status.UNASSIGNED || st == Task.Status.AUCTIONING;
+
             if (finished) {
                 it.remove();
+                if (st == Task.Status.COMPLETED) {
+                    int total = completedCycleCount.incrementAndGet();
+                    log.info("ContinuousTaskDriver: Task {} successfully completed! (Total completed cycles: {})",
+                            e.getKey().getTaskId(), total);
+
+                    if (remainingCycles > 0) {
+                        remainingCycles--;
+                        if (remainingCycles == 0) {
+                            // Đã hoàn tất đủ số chu kỳ chỉ định (ví dụ 1 chu kỳ khởi đầu)
+                            this.enabled = false;
+                            log.info("ContinuousTaskDriver: Target cycle completed. Pausing auto dispatch for user analysis.");
+                            if (cycleCompleteListener != null) {
+                                try {
+                                    cycleCompleteListener.accept(e.getKey());
+                                } catch (Exception ex) {
+                                    log.error("Error executing cycleCompleteListener", ex);
+                                }
+                            }
+                        }
+                    }
+                }
             } else if (pending && now - e.getValue() > AUCTION_WATCHDOG_MS) {
                 log.warn("Task {} stuck in {} for >{} ms, dropped from tracking",
                         e.getKey().getTaskId(), st, AUCTION_WATCHDOG_MS);
@@ -149,6 +218,26 @@ public final class ContinuousTaskDriver {
             } else if (pending) {
                 waiting++;
             }
+        }
+
+        // Nếu chu kỳ đã hết (0) hoặc đang dừng thì không phát thêm việc
+        if (!enabled || remainingCycles == 0) {
+            return;
+        }
+
+        // Trong chế độ 1 chu kỳ (remainingCycles > 0), nếu đang có đơn in-flight thì chờ đơn này hoàn tất
+        if (remainingCycles > 0 && !inFlight.isEmpty()) {
+            return;
+        }
+
+        List<AgvRobot> alive = new ArrayList<>();
+        for (AgvRobot r : robotsSupplier.get()) {
+            if (!r.isCrashed()) {
+                alive.add(r);
+            }
+        }
+        if (alive.size() < 2) {
+            return; // cần ít nhất 1 người phát thầu và 1 người nhận việc
         }
 
         // Mỗi lúc chỉ cho 1 phiên đấu thầu mở, để xe rảnh không bị chia nhỏ giữa nhiều phiên.
@@ -193,6 +282,58 @@ public final class ContinuousTaskDriver {
         }
         log.info("AutoDemo: AGV {} announces {}", announcer.getNodeId(), task.getTaskId());
         announcer.getNode().announceTask(task);
+    }
+
+    /**
+     * Phát thầu 1 nhiệm vụ ngẫu nhiên ngay lập tức (dùng khi người dùng chọn thủ công từ menu hoặc nút).
+     */
+    public synchronized Task announceRandomTask() {
+        List<AgvRobot> alive = new ArrayList<>();
+        for (AgvRobot r : robotsSupplier.get()) {
+            if (!r.isCrashed()) {
+                alive.add(r);
+            }
+        }
+        if (alive.size() < 2) {
+            log.warn("Cannot announce task: Need at least 2 alive AGVs, but found {}", alive.size());
+            return null;
+        }
+
+        List<AgvRobot> idle = new ArrayList<>();
+        for (AgvRobot r : alive) {
+            if (r.getState() == AgentState.IDLE && r.getCurrentTask() == null) {
+                idle.add(r);
+            }
+        }
+        if (idle.isEmpty()) {
+            log.warn("Cannot announce task: No idle AGVs available");
+            return null;
+        }
+
+        List<AgvRobot> announcerCandidates = new ArrayList<>();
+        for (AgvRobot a : alive) {
+            long otherIdle = idle.stream().filter(r -> r.getNodeId() != a.getNodeId()).count();
+            if (otherIdle >= 1) {
+                announcerCandidates.add(a);
+            }
+        }
+        AgvRobot announcer = announcerCandidates.isEmpty()
+                ? alive.get(random.nextInt(alive.size()))
+                : announcerCandidates.get(random.nextInt(announcerCandidates.size()));
+
+        Task task = createRandomTask(mapSupplier.get());
+        if (task == null) {
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        inFlight.put(task, now);
+        taskRegistrar.accept(task);
+        if (announcerListener != null) {
+            announcerListener.accept(announcer);
+        }
+        log.info("ContinuousTaskDriver: AGV {} announces task {}", announcer.getNodeId(), task.getTaskId());
+        announcer.getNode().announceTask(task);
+        return task;
     }
 
     private Task createRandomTask(GridMap map) {
