@@ -315,7 +315,9 @@ public class AgvFleetSimulatorApp extends Application {
                     cnpVisualWinnerId = null;
                     cnpVisualTimestamp = System.currentTimeMillis();
                 },
+                task -> Platform.runLater(() -> onSingleCycleCompleted(task)),
                 2500, 42L);
+        autoDriver.setRemainingCycles(1);
         autoDriver.start();
 
         // 6. Start Render & Simulation loops
@@ -403,10 +405,10 @@ public class AgvFleetSimulatorApp extends Application {
         controlGroup.getChildren().addAll(pauseFleetBtn, stepModeBtn, speedLabel, speedSlider, speedValLabel);
 
         // 3. Group: Demo tự động
-        autoDemoBtn = new ToggleButton("⏹ Dừng Auto Demo");
+        autoDemoBtn = new ToggleButton("⏹ Đang chạy chu kỳ 1");
         autoDemoBtn.setSelected(true);
-        autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
-        Tooltip.install(autoDemoBtn, new Tooltip("Tự động sinh nhiệm vụ liên tục"));
+        autoDemoBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(autoDemoBtn, new Tooltip("Đang chạy chu kỳ mục tiêu 1. Sau khi hoàn thành sẽ tự động dừng để bạn phân tích [Phím C]"));
         autoDemoBtn.setOnAction(e -> toggleAutoDemo());
 
         // 4. Group: Trình chiếu
@@ -432,6 +434,37 @@ public class AgvFleetSimulatorApp extends Application {
         MenuItem randomTaskItem = new MenuItem("📦 Phát thầu nhiệm vụ ngẫu nhiên");
         randomTaskItem.setOnAction(e -> triggerRandomTaskAnnouncement());
 
+        ToggleGroup autoModeGroup = new ToggleGroup();
+        RadioMenuItem singleCycleItem = new RadioMenuItem("Chế độ: Chạy 1 chu kỳ (Dừng phân tích)");
+        singleCycleItem.setToggleGroup(autoModeGroup);
+        singleCycleItem.setSelected(true);
+        singleCycleItem.setOnAction(e -> {
+            if (autoDriver != null) {
+                autoDriver.setRemainingCycles(0);
+                autoDriver.setEnabled(false);
+            }
+            if (autoDemoBtn != null) {
+                autoDemoBtn.setSelected(false);
+                autoDemoBtn.setText("▶ Chạy 1 chu kỳ");
+                autoDemoBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            }
+            addLiveFeed("Chế độ: Chạy 1 chu kỳ (Dừng để phân tích)", Color.web("#38BDF8"));
+        });
+
+        RadioMenuItem continuousItem = new RadioMenuItem("Chế độ: Chạy liên tục (Continuous)");
+        continuousItem.setToggleGroup(autoModeGroup);
+        continuousItem.setOnAction(e -> {
+            if (autoDriver != null) {
+                autoDriver.setContinuous(true);
+            }
+            if (autoDemoBtn != null) {
+                autoDemoBtn.setSelected(true);
+                autoDemoBtn.setText("⏹ Dừng Auto Demo");
+                autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            }
+            addLiveFeed("Chế độ: Chạy liên tục", Color.web("#10B981"));
+        });
+
         CheckMenuItem feedToggleItem = new CheckMenuItem("🔔 Hiện Live Event Feed");
         feedToggleItem.setSelected(true);
         feedToggleItem.setOnAction(e -> liveFeedEnabled = feedToggleItem.isSelected());
@@ -446,7 +479,11 @@ public class AgvFleetSimulatorApp extends Application {
         MenuItem resetFleetItem = new MenuItem("🔄 Đặt lại đội xe & bản đồ [Phím R]");
         resetFleetItem.setOnAction(e -> resetFleetToDefault());
 
-        moreMenu.getItems().addAll(addAgvItem, randomTaskItem, new SeparatorMenuItem(), feedToggleItem, patrolToggleItem, new SeparatorMenuItem(), resetFleetItem);
+        moreMenu.getItems().addAll(
+                addAgvItem, randomTaskItem, new SeparatorMenuItem(),
+                singleCycleItem, continuousItem, new SeparatorMenuItem(),
+                feedToggleItem, patrolToggleItem, new SeparatorMenuItem(),
+                resetFleetItem);
 
         titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, controlGroup, autoDemoBtn, presentationModeBtn, exportReportBtn, moreMenu);
 
@@ -861,6 +898,8 @@ public class AgvFleetSimulatorApp extends Application {
                 resetFleetToDefault();
             } else if (code == KeyCode.P || code == KeyCode.F11) {
                 togglePresentationMode();
+            } else if (code == KeyCode.C) {
+                toggleAutoDemo();
             } else if (code == KeyCode.ESCAPE) {
                 if (presentationModeActive) {
                     togglePresentationMode();
@@ -2299,17 +2338,48 @@ public class AgvFleetSimulatorApp extends Application {
     }
 
     private void toggleAutoDemo() {
-        boolean active = autoDemoBtn.isSelected();
-        if (autoDriver != null) {
+        if (autoDriver == null) return;
+        if (autoDriver.isContinuous()) {
+            boolean active = autoDemoBtn.isSelected();
             autoDriver.setEnabled(active);
-        }
-        if (active) {
-            autoDemoBtn.setText("⏹ Dừng Auto Demo");
-            autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
+            if (active) {
+                autoDemoBtn.setText("⏹ Dừng Auto Demo");
+                autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            } else {
+                autoDemoBtn.setText("▶ Bắt đầu demo (Auto)");
+                autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            }
         } else {
-            autoDemoBtn.setText("▶ Bắt đầu demo (Auto)");
-            autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
+            // Single cycle mode
+            if (autoDriver.isEnabled() && autoDriver.getRemainingCycles() > 0) {
+                // Đang chạy chu kỳ -> Dừng lại
+                autoDriver.setEnabled(false);
+                autoDriver.setRemainingCycles(0);
+                autoDemoBtn.setSelected(false);
+                autoDemoBtn.setText("▶ Chạy 1 chu kỳ");
+                autoDemoBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+                addLiveFeed("Đã dừng chu kỳ mục tiêu theo yêu cầu.", Color.web("#94A3B8"));
+            } else {
+                // Đang dừng -> Kích hoạt chạy 1 chu kỳ
+                autoDemoBtn.setSelected(true);
+                autoDemoBtn.setText("⏹ Dừng chu kỳ");
+                autoDemoBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+                addLiveFeed("Bắt đầu chạy 1 vòng tuần hoàn mục tiêu mới...", Color.web("#38BDF8"));
+                autoDriver.triggerSingleCycle();
+            }
         }
+    }
+
+    private void onSingleCycleCompleted(Task task) {
+        log.info("Auto Demo: Hoàn tất 1 vòng tuần hoàn mục tiêu cho đơn {}", task.getTaskId());
+        if (autoDemoBtn != null) {
+            autoDemoBtn.setSelected(false);
+            autoDemoBtn.setText("▶ Chạy tiếp 1 chu kỳ");
+            autoDemoBtn.setStyle("-fx-background-color: #0284C7; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+            Tooltip.install(autoDemoBtn, new Tooltip("Đã hoàn tất 1 vòng tuần hoàn mục tiêu. Bấm để chạy tiếp 1 chu kỳ nữa [Phím C]"));
+        }
+        setPresentationBanner("✓ HOÀN TẤT 1 VÒNG TUẦN HOÀN MỤC TIÊU (" + task.getTaskId() + ") - Dừng để phân tích P2P");
+        addLiveFeed("✓ Hoàn tất 1 chu kỳ mục tiêu [" + task.getTaskId() + "]. Đã dừng tự động để bạn phân tích các hoạt động & gói tin P2P.", Color.web("#F59E0B"));
     }
 
     private void triggerRandomTaskAnnouncement() {
