@@ -93,13 +93,6 @@ public class AgvFleetSimulatorApp extends Application {
     private final AtomicInteger taskCounter = new AtomicInteger(1001);
     private final AtomicInteger nextNodeId = new AtomicInteger(7);
     private final Random seededRandom = new Random(42);
-    private final java.util.concurrent.atomic.AtomicBoolean autoDemoActive = new java.util.concurrent.atomic.AtomicBoolean(true);
-    private final ScheduledExecutorService backgroundScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "simulator-auto-demo");
-        t.setDaemon(true);
-        return t;
-    });
-    private ScheduledFuture<?> autoDemoFuture = null;
     private ToggleButton autoDemoBtn;
     private ContinuousTaskDriver autoDriver;
 
@@ -213,7 +206,7 @@ public class AgvFleetSimulatorApp extends Application {
     private final Map<Long, Deque<Position2D>> robotTrails = new ConcurrentHashMap<>();
     private final Map<Long, Long> crashTimestamps = new ConcurrentHashMap<>();
     private final Map<Long, Long> robotIdleSinceMs = new ConcurrentHashMap<>();
-    private volatile boolean patrolEnabled = true;
+    private volatile boolean patrolEnabled = false;
 
     @Override
     public void start(Stage primaryStage) {
@@ -813,7 +806,7 @@ public class AgvFleetSimulatorApp extends Application {
         newTaskBtn.setOnAction(e -> showTaskConfigDialog());
 
         Button quickTaskBtn = createStyledButton("⚡ Nhiệm vụ ngẫu nhiên", "#1D4ED8", "Tự động sinh nhiệm vụ giữa 2 ô trống bất kỳ");
-        quickTaskBtn.setOnAction(e -> spawnRandomTask());
+        quickTaskBtn.setOnAction(e -> triggerRandomTaskAnnouncement());
 
         Button deployAgvBtn = createStyledButton("➕ Thêm xe AGV...", "#059669", "Cấu hình và triển khai thêm xe AGV vào mạng mesh");
         deployAgvBtn.setOnAction(e -> showAgvConfigDialog());
@@ -2307,7 +2300,6 @@ public class AgvFleetSimulatorApp extends Application {
 
     private void toggleAutoDemo() {
         boolean active = autoDemoBtn.isSelected();
-        autoDemoActive.set(active);
         if (autoDriver != null) {
             autoDriver.setEnabled(active);
         }
@@ -2317,54 +2309,15 @@ public class AgvFleetSimulatorApp extends Application {
         } else {
             autoDemoBtn.setText("▶ Bắt đầu demo (Auto)");
             autoDemoBtn.setStyle("-fx-background-color: #059669; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 4px;");
-            if (autoDemoFuture != null) {
-                autoDemoFuture.cancel(false);
-                autoDemoFuture = null;
-            }
         }
     }
 
-    private void scheduleNextAutoDemoTask() {
-        if (!autoDemoActive.get()) return;
-        long delayMs = 3000 + seededRandom.nextInt(2001); // 3-5 seconds
-        autoDemoFuture = backgroundScheduler.schedule(() -> {
-            Platform.runLater(() -> {
-                if (autoDemoActive.get()) {
-                    spawnRandomTask();
-                    scheduleNextAutoDemoTask();
-                }
-            });
-        }, delayMs, TimeUnit.MILLISECONDS);
-    }
-
     private void triggerRandomTaskAnnouncement() {
-        spawnRandomTask();
-    }
-
-    private void spawnRandomTask() {
-        List<GridPoint> emptyPoints = map.getWalkableEmptyPoints();
-        if (emptyPoints.size() < 2) return;
-
-        Collections.shuffle(emptyPoints, seededRandom);
-        GridPoint p = emptyPoints.get(0);
-        GridPoint d = emptyPoints.get(1);
-
-        String taskId = "ORD-" + taskCounter.getAndIncrement();
-        Task task = new Task(taskId, p.x(), p.y(), d.x(), d.y());
-        allTasks.add(task);
-
-        List<AgvRobot> aliveRobots = robots.stream()
-                .filter(r -> !r.isCrashed() && !r.isPaused())
-                .toList();
-
-        if (!aliveRobots.isEmpty()) {
-            AgvRobot announcer = aliveRobots.get(seededRandom.nextInt(aliveRobots.size()));
-            cnpVisualAnnouncerId = announcer.getNodeId();
-            cnpVisualBids.clear();
-            cnpVisualWinnerId = null;
-            cnpVisualTimestamp = System.currentTimeMillis();
-            log.info("Auto Demo: AGV {} chosen to announce task {}", announcer.getNodeId(), taskId);
-            announcer.getNode().announceTask(task);
+        if (autoDriver != null) {
+            Task t = autoDriver.announceRandomTask();
+            if (t != null) {
+                addLiveFeed("Phát thầu nhiệm vụ: " + t.getTaskId(), Color.web("#38BDF8"));
+            }
         }
     }
 
@@ -2406,10 +2359,7 @@ public class AgvFleetSimulatorApp extends Application {
 
     private void shutdown() {
         log.info("Shutting down AGV Fleet Simulator...");
-        autoDemoActive.set(false);
         if (autoDriver != null) autoDriver.stop();
-        if (autoDemoFuture != null) autoDemoFuture.cancel(false);
-        backgroundScheduler.shutdownNow();
         if (renderLoop != null) renderLoop.stop();
         if (uiRefreshTimeline != null) uiRefreshTimeline.stop();
         if (physicsController != null) physicsController.stop();
