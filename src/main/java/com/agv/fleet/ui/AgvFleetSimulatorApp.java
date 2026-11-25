@@ -971,6 +971,13 @@ public class AgvFleetSimulatorApp extends Application {
         stopAndClearFleet();
         allTasks.clear();
         metricsCollector.reset();
+        fleetPaused = false;
+        if (physicsController != null) physicsController.setPaused(false);
+        if (pauseFleetBtn != null) {
+            pauseFleetBtn.setText("⏸ Tạm dừng");
+            pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        }
+        if (autoDriver != null) autoDriver.setEnabled(false);
 
         scenarioController.startS1Scenario(vehicleCount);
 
@@ -993,7 +1000,7 @@ public class AgvFleetSimulatorApp extends Application {
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(ix - 4, iy), 100.0, "Pallet AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 4), 100.0, "Pallet AGV-2", 1.0);
 
-            CompletableFuture.delayedExecutor(1200, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+            CompletableFuture.delayedExecutor(400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.updateS1Step2();
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: Cả 2 xe đồng thời tiến vào ngã tư. Thuật toán Ricart-Agrawala giải quyết quyền ưu tiên...");
                 r1.setDestination(new GridPoint(ix + 4, iy));
@@ -1008,7 +1015,7 @@ public class AgvFleetSimulatorApp extends Application {
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(ix + 4, iy), 100.0, "Pallet AGV-3", 1.0);
             AgvRobot r4 = createAndStartRobot(4L, new GridPoint(ix, iy + 4), 100.0, "Pallet AGV-4", 1.0);
 
-            CompletableFuture.delayedExecutor(1500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+            CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.updateS1Step2();
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: 4 xe từ 4 hướng cùng xin vào ngã tư (7, 6)...");
                 r1.setDestination(new GridPoint(ix + 4, iy));
@@ -1036,6 +1043,13 @@ public class AgvFleetSimulatorApp extends Application {
         stopAndClearFleet();
         allTasks.clear();
         metricsCollector.reset();
+        fleetPaused = false;
+        if (physicsController != null) physicsController.setPaused(false);
+        if (pauseFleetBtn != null) {
+            pauseFleetBtn.setText("⏸ Tạm dừng");
+            pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        }
+        if (autoDriver != null) autoDriver.setEnabled(false);
 
         cnpVisualAnnouncerId = 1L;
         cnpVisualBids.clear();
@@ -1059,10 +1073,10 @@ public class AgvFleetSimulatorApp extends Application {
             scenarioBannerOverlay.showBanner(UiScenarioType.S2_ADAPTIVE_AUCTION,
                     "Bước 1/3: Khởi tạo 2 xe: AGV 1 (90% Pin - Phát thầu), AGV 2 (80% Pin - Đấu thầu)...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "Announcer AGV-1 (90%)", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 80.0, "Contractor AGV-2 (80%)", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 80.0, "Contractor AGV-2 (80%)", 1.0);
 
-            CompletableFuture.delayedExecutor(1600, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                Task task = new Task("TASK-CNP-DEMO", 7, 5, 18, 6, Task.Priority.HIGH, "Pallet Gỗ");
+            CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                Task task = new Task("TASK-CNP-DEMO", 7, 6, 17, 6, Task.Priority.HIGH, "Pallet Gỗ");
                 allTasks.add(task);
                 scenarioController.updateS2Step2(task.getTaskId());
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: AGV 1 phát thầu. AGV 2 nộp báo giá và trúng thầu...");
@@ -1073,12 +1087,12 @@ public class AgvFleetSimulatorApp extends Application {
             scenarioBannerOverlay.showBanner(UiScenarioType.S2_ADAPTIVE_AUCTION,
                     "Bước 1/3: Khởi tạo 4 xe: AGV 1 (90%), AGV 2 (10% - Pin yếu), AGV 3 (85%), AGV 4 (50%)...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "Announcer AGV-1 (90%)", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(5, 5), 10.0, "LowBat AGV-2 (10%)", 1.0);
-            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(8, 4), 85.0, "HighBat AGV-3 (85%)", 1.0);
-            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(18, 12), 50.0, "MidBat AGV-4 (50%)", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(2, 6), 10.0, "LowBat AGV-2 (10%)", 1.0);
+            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(7, 2), 85.0, "HighBat AGV-3 (85%)", 1.0);
+            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(12, 2), 50.0, "MidBat AGV-4 (50%)", 1.0);
 
-            CompletableFuture.delayedExecutor(1600, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                Task task = new Task("TASK-CNP-DEMO", 7, 5, 20, 6, Task.Priority.HIGH, "Hàng Linh Kiện");
+            CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                Task task = new Task("TASK-CNP-DEMO", 7, 6, 17, 6, Task.Priority.HIGH, "Hàng Linh Kiện");
                 allTasks.add(task);
                 scenarioController.updateS2Step2(task.getTaskId());
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: AGV 1 phát thầu. AGV 2 từ chối vì pin yếu (<15%); AGV 3 & 4 nộp thầu cạnh tranh...");
@@ -1103,6 +1117,13 @@ public class AgvFleetSimulatorApp extends Application {
         stopAndClearFleet();
         allTasks.clear();
         metricsCollector.reset();
+        fleetPaused = false;
+        if (physicsController != null) physicsController.setPaused(false);
+        if (pauseFleetBtn != null) {
+            pauseFleetBtn.setText("⏸ Tạm dừng");
+            pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        }
+        if (autoDriver != null) autoDriver.setEnabled(false);
 
         scenarioController.startS3Scenario(variant);
 
@@ -1124,11 +1145,11 @@ public class AgvFleetSimulatorApp extends Application {
             scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
                     "Bước 1/2: AGV 1 phát thầu. AGV 2 nhận việc và di chuyển...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Announcer AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 90.0, "Contractor AGV-2", 1.0);
-            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(14, 6), 90.0, "Backup AGV-3", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 90.0, "Contractor AGV-2", 1.0);
+            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(12, 2), 90.0, "Backup AGV-3", 1.0);
 
-            CompletableFuture.delayedExecutor(1400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                Task task = new Task("TASK-REALLOC-S3", 8, 4, 18, 6);
+            CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                Task task = new Task("TASK-REALLOC-S3", 7, 6, 17, 6);
                 allTasks.add(task);
                 r1.getNode().announceTask(task);
 
@@ -1147,9 +1168,9 @@ public class AgvFleetSimulatorApp extends Application {
             scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
                     "Bước 1/2: Khởi tạo AGV 1 (Monitor) và AGV 2 (Worker) kết nối P2P...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Monitor AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 90.0, "Worker AGV-2", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 90.0, "Worker AGV-2", 1.0);
 
-            CompletableFuture.delayedExecutor(1400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+            CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.notifyStep(2, 2, "Bước 2/2: AGV 2 ngừng gửi heartbeat (Freeze network). AGV 1 đếm timeout...");
                 scenarioBannerOverlay.updateStepBanner("Bước 2/2: ⏳ AGV 2 ngừng gửi heartbeat. AGV 1 đếm ngược timeout phát hiện rớt mạng...");
                 s3CrashTimestamp = System.currentTimeMillis();
@@ -1173,7 +1194,7 @@ public class AgvFleetSimulatorApp extends Application {
 
             String cellId = map.getIntersectionCellId(7, 6);
 
-            CompletableFuture.delayedExecutor(1200, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+            CompletableFuture.delayedExecutor(400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 r1.getNode().acquireIntersection(cellId);
                 r2.setDestination(new GridPoint(7, 10));
                 r2.getNode().setAgentState(AgentState.MOVING);
@@ -1284,7 +1305,7 @@ public class AgvFleetSimulatorApp extends Application {
                 }
 
                 // Record movement trail (up to 10 points)
-                Deque<Position2D> trail = robotTrails.computeIfAbsent(robot.getNodeId(), k -> new ArrayDeque<>());
+                Deque<Position2D> trail = robotTrails.computeIfAbsent(robot.getNodeId(), k -> new ConcurrentLinkedDeque<>());
                 Position2D curPos = new Position2D(robot.getRenderX(), robot.getRenderY());
                 if (trail.isEmpty() || Math.hypot(trail.peekLast().x() - curPos.x(), trail.peekLast().y() - curPos.y()) > 0.05) {
                     trail.addLast(curPos);
@@ -1305,7 +1326,7 @@ public class AgvFleetSimulatorApp extends Application {
                         && robot.getRemainingPath().isEmpty() && robot.getCurrentTask() == null) {
                     long now = System.currentTimeMillis();
                     long idleSince = robotIdleSinceMs.computeIfAbsent(robot.getNodeId(), k -> now);
-                    if (patrolEnabled && (now - idleSince) > 3500L) {
+                    if (!scenarioController.isRunning() && patrolEnabled && (now - idleSince) > 3500L) {
                         List<GridPoint> emptyPoints = map.getWalkableEmptyPoints();
                         List<GridPoint> candidates = emptyPoints.stream()
                                 .filter(p -> p.manhattanDistance(cur) >= 4)
@@ -2069,8 +2090,10 @@ public class AgvFleetSimulatorApp extends Application {
         nextNodeId.set(7);
 
         // Khởi động di chuyển ngay lập tức để màn hình luôn có xe lăn bánh ngay khi mở app
-        r1.setDestination(new GridPoint(10, 4));
-        r2.setDestination(new GridPoint(16, 8));
+        // Các điểm đến đều là ô hành lang di chuyển được (walkable aisle)
+        r1.setDestination(new GridPoint(12, 2));
+        r2.setDestination(new GridPoint(7, 6));
+        r3.setDestination(new GridPoint(2, 6));
     }
 
     private void stopAndClearFleet() {
@@ -2090,7 +2113,17 @@ public class AgvFleetSimulatorApp extends Application {
         allTasks.clear();
         metricsCollector.reset();
         trafficLog.clear();
+        fleetPaused = false;
+        if (physicsController != null) physicsController.setPaused(false);
+        if (pauseFleetBtn != null) {
+            pauseFleetBtn.setText("⏸ Tạm dừng");
+            pauseFleetBtn.setStyle("-fx-background-color: #334155; -fx-text-fill: white; -fx-font-size: 11px; -fx-padding: 3 8 3 8; -fx-cursor: hand; -fx-background-radius: 4px;");
+        }
         initFleet();
+        if (autoDriver != null) {
+            autoDriver.setContinuous(true);
+            autoDriver.setEnabled(true);
+        }
     }
 
     private AgvRobot createAndStartRobot(long nodeId, GridPoint initialPos, double battery, String model, double maintenanceWeight) {
