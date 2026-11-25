@@ -356,7 +356,7 @@ public class AgvFleetSimulatorApp extends Application {
         scenariosMenu.setStyle("-fx-background-color: #2563EB; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-cursor: hand; -fx-background-radius: 5px;");
         Tooltip.install(scenariosMenu, new Tooltip("Chọn và chạy kịch bản kiểm thử phân tán chuyên sâu"));
 
-        MenuItem s1Item = new MenuItem("S1: Đối đầu ngã tư (2/4/8 xe) [Phím 1]");
+        MenuItem s1Item = new MenuItem("S1: Đối đầu ngã tư (2/4 xe) [Phím 1]");
         s1Item.setOnAction(e -> runScenarioS1(2));
 
         MenuItem s2Item = new MenuItem("S2: Đấu thầu thích ứng mức pin [Phím 2]");
@@ -485,7 +485,7 @@ public class AgvFleetSimulatorApp extends Application {
                 feedToggleItem, patrolToggleItem, new SeparatorMenuItem(),
                 resetFleetItem);
 
-        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, controlGroup, autoDemoBtn, presentationModeBtn, exportReportBtn, moreMenu);
+        titleRow.getChildren().addAll(titleBox, spacer, scenariosMenu, controlGroup, autoDemoBtn, moreMenu);
 
         // KPI Summary Badges Row
         HBox kpiRow = new HBox(8);
@@ -977,13 +977,9 @@ public class AgvFleetSimulatorApp extends Application {
         btn4.setStyle("-fx-background-color: #06B6D4; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
         btn4.setOnAction(e -> runScenarioS1(4));
 
-        Button btn8 = new Button("8 Xe");
-        btn8.setStyle("-fx-background-color: #8B5CF6; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
-        btn8.setOnAction(e -> runScenarioS1(8));
-
-        scenarioBannerOverlay.setScenarioControls(btn2, btn4, btn8);
+        scenarioBannerOverlay.setScenarioControls(btn2, btn4);
         scenarioBannerOverlay.showBanner(UiScenarioType.S1_HEAD_ON_INTERSECTION,
-                String.format("Bước 1/3: Khởi tạo %d xe chuẩn bị cùng tiến vào ngã tư (7, 6)...", vehicleCount));
+                String.format("Bước 1/3: Khởi tạo %d xe chuẩn bị cùng tiến vào ngã tư (7, 6)...", vehicleCount == 4 ? 4 : 2));
 
         int ix = 7;
         int iy = 6;
@@ -1000,7 +996,8 @@ public class AgvFleetSimulatorApp extends Application {
                 r1.getNode().setAgentState(AgentState.MOVING);
                 r2.getNode().setAgentState(AgentState.MOVING);
             }));
-        } else if (vehicleCount == 4) {
+        } else {
+            // 4 vehicles
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(ix - 4, iy), 100.0, "Pallet AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 4), 100.0, "Pallet AGV-2", 1.0);
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(ix + 4, iy), 100.0, "Pallet AGV-3", 1.0);
@@ -1017,33 +1014,6 @@ public class AgvFleetSimulatorApp extends Application {
                 r2.getNode().setAgentState(AgentState.MOVING);
                 r3.getNode().setAgentState(AgentState.MOVING);
                 r4.getNode().setAgentState(AgentState.MOVING);
-            }));
-        } else {
-            // 8 vehicles
-            AgvRobot r1 = createAndStartRobot(1L, new GridPoint(ix - 3, iy), 100.0, "Pallet AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix - 5, iy), 100.0, "Pallet AGV-2", 1.0);
-            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(ix, iy - 3), 100.0, "Pallet AGV-3", 1.0);
-            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(ix, iy - 5), 100.0, "Pallet AGV-4", 1.0);
-            AgvRobot r5 = createAndStartRobot(5L, new GridPoint(ix + 3, iy), 100.0, "Pallet AGV-5", 1.0);
-            AgvRobot r6 = createAndStartRobot(6L, new GridPoint(ix + 5, iy), 100.0, "Pallet AGV-6", 1.0);
-            AgvRobot r7 = createAndStartRobot(7L, new GridPoint(ix, iy + 3), 100.0, "Pallet AGV-7", 1.0);
-            AgvRobot r8 = createAndStartRobot(8L, new GridPoint(ix, iy + 5), 100.0, "Pallet AGV-8", 1.0);
-
-            CompletableFuture.delayedExecutor(1800, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                scenarioController.updateS1Step2();
-                scenarioBannerOverlay.updateStepBanner("Bước 2/3: 8 xe đồng thời xin cấp quyền ngã tư...");
-                r1.setDestination(new GridPoint(ix + 4, iy));
-                r2.setDestination(new GridPoint(ix + 5, iy));
-                r3.setDestination(new GridPoint(ix, iy + 4));
-                r4.setDestination(new GridPoint(ix, iy + 5));
-                r5.setDestination(new GridPoint(ix - 4, iy));
-                r6.setDestination(new GridPoint(ix - 5, iy));
-                r7.setDestination(new GridPoint(ix, iy - 4));
-                r8.setDestination(new GridPoint(ix, iy - 5));
-
-                for (AgvRobot r : robots) {
-                    r.getNode().setAgentState(AgentState.MOVING);
-                }
             }));
         }
     }

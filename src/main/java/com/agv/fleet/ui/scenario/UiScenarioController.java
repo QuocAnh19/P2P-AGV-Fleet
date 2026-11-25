@@ -43,7 +43,7 @@ public class UiScenarioController {
     }
 
     public void setS1VehicleCount(int count) {
-        if (count == 2 || count == 4 || count == 8) {
+        if (count == 2 || count == 4) {
             this.s1VehicleCount = count;
         }
     }
@@ -86,7 +86,7 @@ public class UiScenarioController {
     }
 
     public void startS1Scenario(int vehicleCount) {
-        this.s1VehicleCount = vehicleCount;
+        this.s1VehicleCount = (vehicleCount == 4) ? 4 : 2;
         this.activeScenario = UiScenarioType.S1_HEAD_ON_INTERSECTION;
         this.running = true;
         this.currentStep = 1;

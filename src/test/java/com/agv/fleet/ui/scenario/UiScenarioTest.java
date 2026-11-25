@@ -59,7 +59,7 @@ public class UiScenarioTest {
         assertEquals(passResult, resultRef.get());
 
         // 2. Run S1 with collision -> FAIL
-        controller.startS1Scenario(8);
+        controller.startS1Scenario(4);
         UiScenarioResult failResult = controller.finishS1Scenario(true, 1, 300.0);
         assertFalse(failResult.passed());
         assertEquals(1, failResult.collisionCount());
