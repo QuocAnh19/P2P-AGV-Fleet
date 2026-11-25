@@ -37,7 +37,7 @@ public final class ContinuousTaskDriver {
     private static final Logger log = LoggerFactory.getLogger(ContinuousTaskDriver.class);
 
     /** Một đơn đấu thầu quá lâu không có kết quả thì bỏ theo dõi để không tự làm kẹt bộ phát. */
-    private static final long AUCTION_WATCHDOG_MS = 10_000;
+    private static final long AUCTION_WATCHDOG_MS = 3_500;
     private static final int MIN_TRIP_MANHATTAN = 5;
 
     private final Supplier<List<AgvRobot>> robotsSupplier;

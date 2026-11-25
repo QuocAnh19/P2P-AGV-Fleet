@@ -211,7 +211,7 @@ public class AgvFleetSimulatorApp extends Application {
     private final Map<Long, Deque<Position2D>> robotTrails = new ConcurrentHashMap<>();
     private final Map<Long, Long> crashTimestamps = new ConcurrentHashMap<>();
     private final Map<Long, Long> robotIdleSinceMs = new ConcurrentHashMap<>();
-    private volatile boolean patrolEnabled = false;
+    private volatile boolean patrolEnabled = true;
 
     @Override
     public void start(Stage primaryStage) {
@@ -321,8 +321,8 @@ public class AgvFleetSimulatorApp extends Application {
                     cnpVisualTimestamp = System.currentTimeMillis();
                 },
                 task -> Platform.runLater(() -> onSingleCycleCompleted(task)),
-                2500, 42L);
-        autoDriver.setRemainingCycles(1);
+                2000, 42L);
+        autoDriver.setContinuous(true);
         autoDriver.start();
 
         // 6. Start Render & Simulation loops
@@ -410,10 +410,10 @@ public class AgvFleetSimulatorApp extends Application {
         controlGroup.getChildren().addAll(pauseFleetBtn, stepModeBtn, speedLabel, speedSlider, speedValLabel);
 
         // 3. Group: Demo tự động
-        autoDemoBtn = new ToggleButton("⏹ Đang chạy chu kỳ 1");
+        autoDemoBtn = new ToggleButton("⏹ Dừng Auto Demo");
         autoDemoBtn.setSelected(true);
-        autoDemoBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
-        Tooltip.install(autoDemoBtn, new Tooltip("Đang chạy chu kỳ mục tiêu 1. Sau khi hoàn thành sẽ tự động dừng để bạn phân tích [Phím C]"));
+        autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(autoDemoBtn, new Tooltip("Đội xe đang tự động nhận việc và di chuyển liên tục. Bấm để dừng [Phím C]"));
         autoDemoBtn.setOnAction(e -> toggleAutoDemo());
 
         // 4. Group: Trình chiếu
@@ -442,7 +442,6 @@ public class AgvFleetSimulatorApp extends Application {
         ToggleGroup autoModeGroup = new ToggleGroup();
         RadioMenuItem singleCycleItem = new RadioMenuItem("Chế độ: Chạy 1 chu kỳ (Dừng phân tích)");
         singleCycleItem.setToggleGroup(autoModeGroup);
-        singleCycleItem.setSelected(true);
         singleCycleItem.setOnAction(e -> {
             if (autoDriver != null) {
                 autoDriver.setRemainingCycles(0);
@@ -458,6 +457,7 @@ public class AgvFleetSimulatorApp extends Application {
 
         RadioMenuItem continuousItem = new RadioMenuItem("Chế độ: Chạy liên tục (Continuous)");
         continuousItem.setToggleGroup(autoModeGroup);
+        continuousItem.setSelected(true);
         continuousItem.setOnAction(e -> {
             if (autoDriver != null) {
                 autoDriver.setContinuous(true);
@@ -1300,12 +1300,12 @@ public class AgvFleetSimulatorApp extends Application {
                     crashTimestamps.remove(robot.getNodeId());
                 }
 
-                // Patrol Mode check: if IDLE > 8 seconds, dispatch to empty cell at Manhattan dist >= 4
+                // Patrol Mode check: if IDLE > 3.5 seconds, dispatch to empty cell at Manhattan dist >= 4
                 if (!robot.isCrashed() && robot.getState() == AgentState.IDLE
                         && robot.getRemainingPath().isEmpty() && robot.getCurrentTask() == null) {
                     long now = System.currentTimeMillis();
                     long idleSince = robotIdleSinceMs.computeIfAbsent(robot.getNodeId(), k -> now);
-                    if (patrolEnabled && (now - idleSince) > 8000L) {
+                    if (patrolEnabled && (now - idleSince) > 3500L) {
                         List<GridPoint> emptyPoints = map.getWalkableEmptyPoints();
                         List<GridPoint> candidates = emptyPoints.stream()
                                 .filter(p -> p.manhattanDistance(cur) >= 4)
@@ -2060,13 +2060,17 @@ public class AgvFleetSimulatorApp extends Application {
     private void initFleet() {
         map.setCellType(4, 12, CellType.EMPTY);
         map.setCellType(3, 12, CellType.EMPTY);
-        createAndStartRobot(1L, new GridPoint(2, 2), 95.0, "Pallet AGV-1", 1.0);
-        createAndStartRobot(2L, new GridPoint(8, 2), 80.0, "Forklift AGV-2", 1.0);
-        createAndStartRobot(3L, new GridPoint(14, 6), 65.0, "Tugger AGV-3", 1.0);
-        createAndStartRobot(4L, new GridPoint(20, 10), 50.0, "Unit-Load AGV-4", 1.0);
-        createAndStartRobot(5L, new GridPoint(4, 12), 40.0, "Compact AGV-5", 1.0);
-        createAndStartRobot(6L, new GridPoint(18, 14), 30.0, "Heavy Cargo AGV-6", 1.0);
+        AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 95.0, "Pallet AGV-1", 1.0);
+        AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 2), 80.0, "Forklift AGV-2", 1.0);
+        AgvRobot r3 = createAndStartRobot(3L, new GridPoint(14, 6), 65.0, "Tugger AGV-3", 1.0);
+        AgvRobot r4 = createAndStartRobot(4L, new GridPoint(20, 10), 50.0, "Unit-Load AGV-4", 1.0);
+        AgvRobot r5 = createAndStartRobot(5L, new GridPoint(4, 12), 40.0, "Compact AGV-5", 1.0);
+        AgvRobot r6 = createAndStartRobot(6L, new GridPoint(18, 14), 30.0, "Heavy Cargo AGV-6", 1.0);
         nextNodeId.set(7);
+
+        // Khởi động di chuyển ngay lập tức để màn hình luôn có xe lăn bánh ngay khi mở app
+        r1.setDestination(new GridPoint(10, 4));
+        r2.setDestination(new GridPoint(16, 8));
     }
 
     private void stopAndClearFleet() {
