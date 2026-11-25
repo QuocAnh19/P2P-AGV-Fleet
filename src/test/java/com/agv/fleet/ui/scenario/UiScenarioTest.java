@@ -107,6 +107,7 @@ public class UiScenarioTest {
 
     @Test
     public void testS3CrashRecoveryVariants() {
+        // Variant 1: Hard Crash
         controller.startS3Scenario("Hard Crash");
         assertTrue(controller.isRunning());
 
@@ -114,5 +115,18 @@ public class UiScenarioTest {
         assertFalse(controller.isRunning());
         assertTrue(result.passed());
         assertEquals(420L, result.extraMetrics().get("recoveryTimeMs"));
+
+        // Variant 2: Crash Holding Mutex
+        controller.startS3Scenario("Crash khi giữ ngã tư");
+        assertTrue(controller.isRunning());
+        UiScenarioResult mutexRes = controller.finishS3Scenario("Crash khi giữ ngã tư", true, 350);
+        assertFalse(controller.isRunning());
+        assertTrue(mutexRes.passed());
+        assertTrue(mutexRes.summary().contains("PASS"));
+
+        // Variant 3: Freeze Network
+        controller.startS3Scenario("Freeze Network");
+        UiScenarioResult freezeRes = controller.finishS3Scenario("Freeze Network", true, 1500);
+        assertTrue(freezeRes.passed());
     }
 }

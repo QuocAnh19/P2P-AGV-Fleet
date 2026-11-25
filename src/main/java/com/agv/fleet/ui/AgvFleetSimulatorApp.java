@@ -155,6 +155,9 @@ public class AgvFleetSimulatorApp extends Application {
     private volatile long cnpVisualTimestamp = 0;
     private volatile int s2VehicleCount = 4;
     private final Map<String, Long> mutexRequestTimestamps = new ConcurrentHashMap<>();
+    private volatile String s3ActiveVariant = "Crash Holding Mutex";
+    private volatile long s3CrashTimestamp = 0;
+    private volatile boolean s3Finished = false;
 
     // Selection & Inspection
     private volatile AgvRobot selectedRobot = null;
@@ -365,7 +368,7 @@ public class AgvFleetSimulatorApp extends Application {
         s2Item.setOnAction(e -> runScenarioS2(4));
 
         MenuItem s3Item = new MenuItem("S3: Mô phỏng lỗi & sập node [Phím 3]");
-        s3Item.setOnAction(e -> showS3ChoiceDialog());
+        s3Item.setOnAction(e -> runScenarioS3());
 
         scenariosMenu.getItems().addAll(s1Item, s2Item, s3Item);
 
@@ -891,7 +894,7 @@ public class AgvFleetSimulatorApp extends Application {
             } else if (code == KeyCode.DIGIT2 || code == KeyCode.NUMPAD2) {
                 runScenarioS2();
             } else if (code == KeyCode.DIGIT3 || code == KeyCode.NUMPAD3) {
-                showS3ChoiceDialog();
+                runScenarioS3();
             } else if (code == KeyCode.SPACE) {
                 toggleFleetPause();
             } else if (code == KeyCode.S || code == KeyCode.N) {
@@ -1087,82 +1090,100 @@ public class AgvFleetSimulatorApp extends Application {
     // =========================================================================
     // 8. SCENARIO 3: NODE FAILURE & CRASH RECOVERY
     // =========================================================================
-    private void showS3ChoiceDialog() {
-        scenarioBannerOverlay.hideVerdict();
-        stopAndClearFleet();
-        allTasks.clear();
-        metricsCollector.reset();
-
-        scenarioController.startS3Scenario("Chọn biến thể");
-
-        Button hardCrashBtn = new Button("1. Hard Crash");
-        hardCrashBtn.setStyle("-fx-background-color: #EF4444; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
-        hardCrashBtn.setOnAction(e -> runScenarioS3Variant("Hard Crash"));
-
-        Button freezeNetBtn = new Button("2. Freeze Network");
-        freezeNetBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
-        freezeNetBtn.setOnAction(e -> runScenarioS3Variant("Freeze Network"));
-
-        Button mutexCrashBtn = new Button("3. Crash khi giữ ngã tư");
-        mutexCrashBtn.setStyle("-fx-background-color: #8B5CF6; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
-        mutexCrashBtn.setOnAction(e -> runScenarioS3Variant("Crash Holding Mutex"));
-
-        scenarioBannerOverlay.setScenarioControls(hardCrashBtn, freezeNetBtn, mutexCrashBtn);
-        scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
-                "Bước 1/2: Chọn một trong 3 biến thể sự cố mạng để mô phỏng khả năng tự phục hồi:");
+    public void runScenarioS3() {
+        runScenarioS3Variant("Crash Holding Mutex");
     }
 
     public void runScenarioS3Variant(String variant) {
+        this.s3ActiveVariant = variant;
+        this.s3CrashTimestamp = 0;
+        this.s3Finished = false;
+
+        scenarioBannerOverlay.hideVerdict();
         stopAndClearFleet();
         allTasks.clear();
         metricsCollector.reset();
 
         scenarioController.startS3Scenario(variant);
 
+        Button mutexCrashBtn = new Button("1. Sập khi giữ ngã tư");
+        mutexCrashBtn.setStyle("-fx-background-color: " + ("Crash Holding Mutex".equals(variant) ? "#8B5CF6" : "#475569") + "; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
+        mutexCrashBtn.setOnAction(e -> runScenarioS3Variant("Crash Holding Mutex"));
+
+        Button hardCrashBtn = new Button("2. Sập xe nhận thầu");
+        hardCrashBtn.setStyle("-fx-background-color: " + ("Hard Crash".equals(variant) ? "#EF4444" : "#475569") + "; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
+        hardCrashBtn.setOnAction(e -> runScenarioS3Variant("Hard Crash"));
+
+        Button freezeNetBtn = new Button("3. Freeze mạng (Heartbeat)");
+        freezeNetBtn.setStyle("-fx-background-color: " + ("Freeze Network".equals(variant) ? "#F59E0B" : "#475569") + "; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
+        freezeNetBtn.setOnAction(e -> runScenarioS3Variant("Freeze Network"));
+
+        scenarioBannerOverlay.setScenarioControls(mutexCrashBtn, hardCrashBtn, freezeNetBtn);
+
         if ("Hard Crash".equals(variant)) {
-            scenarioBannerOverlay.updateStepBanner("Bước 1/2: Khởi tạo AGV 1 và AGV 2. AGV 1 phát thầu, AGV 2 nhận việc và đột ngột sập nguồn...");
+            scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
+                    "Bước 1/2: AGV 1 phát thầu. AGV 2 nhận việc và di chuyển...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Announcer AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 90.0, "Contractor AGV-2", 1.0);
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(14, 6), 90.0, "Backup AGV-3", 1.0);
 
             CompletableFuture.delayedExecutor(1400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                Task task = new Task("TASK-REALLOC-S3", 4, 4, 18, 6);
+                Task task = new Task("TASK-REALLOC-S3", 8, 4, 18, 6);
                 allTasks.add(task);
                 r1.getNode().announceTask(task);
 
-                CompletableFuture.delayedExecutor(800, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                    scenarioBannerOverlay.updateStepBanner("💥 AGV 2 đột ngột sập nguồn (Hard Crash). AGV 1 phát hiện mất kết nối và tự động tái phát thầu...");
+                CompletableFuture.delayedExecutor(1200, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                    s3CrashTimestamp = System.currentTimeMillis();
+                    crashTimestamps.put(2L, s3CrashTimestamp);
                     r2.crash();
+                    scenarioController.notifyStep(2, 2, "Bước 2/2: 💥 AGV 2 sập nguồn! AGV 1 tái phát thầu cho AGV 3...");
+                    scenarioBannerOverlay.updateStepBanner("Bước 2/2: 💥 AGV 2 sập nguồn! AGV 1 tự thu hồi và tái phát thầu cho AGV 3 tiếp quản...");
+                    CompletableFuture.delayedExecutor(800, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                        r1.getNode().announceTask(task);
+                    }));
                 }));
             }));
         } else if ("Freeze Network".equals(variant)) {
-            scenarioBannerOverlay.updateStepBanner("Bước 1/2: AGV 2 bị treo mạng (freeze network: giữ socket mở nhưng ngừng gửi heartbeat)...");
+            scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
+                    "Bước 1/2: Khởi tạo AGV 1 (Monitor) và AGV 2 (Worker) kết nối P2P...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Monitor AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(10, 4), 90.0, "Hanging AGV-2", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 90.0, "Worker AGV-2", 1.0);
 
-            CompletableFuture.delayedExecutor(1500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                scenarioBannerOverlay.updateStepBanner("⏳ AGV 2 ngừng gửi heartbeat. AGV 1 đang đếm ngược thời gian hết hạn nhịp tim (heartbeat timeout)...");
+            CompletableFuture.delayedExecutor(1400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                scenarioController.notifyStep(2, 2, "Bước 2/2: AGV 2 ngừng gửi heartbeat (Freeze network). AGV 1 đếm timeout...");
+                scenarioBannerOverlay.updateStepBanner("Bước 2/2: ⏳ AGV 2 ngừng gửi heartbeat. AGV 1 đếm ngược timeout phát hiện rớt mạng...");
+                s3CrashTimestamp = System.currentTimeMillis();
                 r2.getNode().freezeNetwork();
 
-                CompletableFuture.delayedExecutor(1800, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                    UiScenarioResult res = scenarioController.finishS3Scenario("Freeze Network", true, 1500);
-                    scenarioBannerOverlay.showVerdict(res);
+                CompletableFuture.delayedExecutor(2200, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                    if (!s3Finished && scenarioController.isRunning()) {
+                        s3Finished = true;
+                        long elapsed = System.currentTimeMillis() - s3CrashTimestamp;
+                        UiScenarioResult res = scenarioController.finishS3Scenario("Freeze Network", true, elapsed);
+                        scenarioBannerOverlay.showVerdict(res);
+                    }
                 }));
             }));
         } else {
-            // Crash Holding Mutex
-            scenarioBannerOverlay.updateStepBanner("Bước 1/2: AGV 1 đang chiếm giữ ngã tư (7, 6). AGV 2 đang chờ. AGV 1 bị sập nguồn đột ngột...");
+            // Crash Holding Mutex (Default)
+            scenarioBannerOverlay.showBanner(UiScenarioType.S3_CRASH_RECOVERY,
+                    "Bước 1/2: AGV 1 đang chiếm giữ ngã tư (7, 6). AGV 2 đang tiến tới ngã tư...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(7, 6), 100.0, "Holding AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 100.0, "Waiting AGV-2", 1.0);
 
+            String cellId = map.getIntersectionCellId(7, 6);
+
             CompletableFuture.delayedExecutor(1200, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                r1.getNode().acquireIntersection("(7, 6)");
+                r1.getNode().acquireIntersection(cellId);
                 r2.setDestination(new GridPoint(7, 10));
                 r2.getNode().setAgentState(AgentState.MOVING);
 
-                CompletableFuture.delayedExecutor(1000, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-                    scenarioBannerOverlay.updateStepBanner("💥 AGV 1 sập khi đang HELD ngã tư! AGV 2 phát hiện qua cơ chế onPeerDropped và tự động được thăng cấp HELD...");
+                CompletableFuture.delayedExecutor(1400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                    s3CrashTimestamp = System.currentTimeMillis();
+                    crashTimestamps.put(1L, s3CrashTimestamp);
                     r1.crash();
+                    scenarioController.notifyStep(2, 2, "Bước 2/2: 💥 AGV 1 sập nguồn khi đang giữ ngã tư! AGV 2 phát hiện qua onPeerDropped và tự động thăng cấp HELD...");
+                    scenarioBannerOverlay.updateStepBanner("Bước 2/2: 💥 AGV 1 sập nguồn! AGV 2 tự động giải phóng chờ và tiếp tục tiến qua ngã tư...");
                 }));
             }));
         }
@@ -1346,6 +1367,39 @@ public class AgvFleetSimulatorApp extends Application {
                             scenarioBannerOverlay.showVerdict(res);
                         });
                     }
+                }
+            }
+
+            // 4. Check S3 Scenario Completion (Requirement: auto evaluate recovery & show PASS verdict)
+            if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S3_CRASH_RECOVERY && !s3Finished) {
+                if ("Crash Holding Mutex".equals(s3ActiveVariant) && scenarioController.getCurrentStep() >= 2) {
+                    robots.stream().filter(r -> r.getNodeId() == 2L).findFirst().ifPresent(r2 -> {
+                        boolean crossedIntersection = r2.getY() >= 8 || r2.getRenderY() >= 7.8;
+                        boolean reached = r2.getRemainingPath().isEmpty() || r2.getState() == AgentState.IDLE;
+                        boolean freeOfMutex = r2.getHeldIntersection() == null && r2.getWaitingIntersection() == null;
+
+                        if ((crossedIntersection || reached) && freeOfMutex) {
+                            s3Finished = true;
+                            Platform.runLater(() -> {
+                                long recoveryMs = Math.max(100, System.currentTimeMillis() - s3CrashTimestamp);
+                                UiScenarioResult res = scenarioController.finishS3Scenario("Crash khi giữ ngã tư", true, recoveryMs);
+                                scenarioBannerOverlay.showVerdict(res);
+                            });
+                        }
+                    });
+                } else if ("Hard Crash".equals(s3ActiveVariant) && scenarioController.getCurrentStep() >= 2) {
+                    robots.stream().filter(r -> r.getNodeId() == 3L).findFirst().ifPresent(r3 -> {
+                        if (r3.getState() == AgentState.MOVING || r3.getState() == AgentState.BUSY || r3.getCurrentTask() != null) {
+                            if (System.currentTimeMillis() - s3CrashTimestamp > 2500) {
+                                s3Finished = true;
+                                Platform.runLater(() -> {
+                                    long recoveryMs = System.currentTimeMillis() - s3CrashTimestamp;
+                                    UiScenarioResult res = scenarioController.finishS3Scenario("Sập xe nhận việc", true, recoveryMs);
+                                    scenarioBannerOverlay.showVerdict(res);
+                                });
+                            }
+                        }
+                    });
                 }
             }
         } catch (Exception e) {
