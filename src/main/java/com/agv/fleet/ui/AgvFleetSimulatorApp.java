@@ -1403,7 +1403,7 @@ public class AgvFleetSimulatorApp extends Application {
             if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S3_CRASH_RECOVERY && !s3Finished) {
                 if ("Crash Holding Mutex".equals(s3ActiveVariant) && scenarioController.getCurrentStep() >= 2) {
                     robots.stream().filter(r -> r.getNodeId() == 2L).findFirst().ifPresent(r2 -> {
-                        boolean crossedIntersection = r2.getY() >= 8 || r2.getRenderY() >= 7.8;
+                        boolean crossedIntersection = r2.getCurrentGridPos().y() >= 8 || r2.getRenderY() >= 7.8;
                         boolean reached = r2.getRemainingPath().isEmpty() || r2.getState() == AgentState.IDLE;
                         boolean freeOfMutex = r2.getHeldIntersection() == null && r2.getWaitingIntersection() == null;
 
@@ -2238,39 +2238,30 @@ public class AgvFleetSimulatorApp extends Application {
         return robot;
     }
 
-    private void interconnectRobotWithPeers(AgvRobot robot) {
-        if (robot == null || robot.isCrashed() || robot.getNode() == null || !robot.getNode().isRunning()) {
+    private void connectPair(AgvRobot a, AgvRobot b) {
+        if (a == null || b == null || a == b || a.isCrashed() || b.isCrashed()
+                || a.getNode() == null || b.getNode() == null
+                || !a.getNode().isRunning() || !b.getNode().isRunning()) {
             return;
         }
-        long nodeId = robot.getNodeId();
-        int thisPort = robot.getNode().getActualTcpPort();
-        for (AgvRobot other : robots) {
-            if (other != robot && !other.isCrashed() && other.getNode() != null && other.getNode().isRunning()) {
-                long otherId = other.getNodeId();
-                int otherPort = other.getNode().getActualTcpPort();
+        int portA = a.getNode().getTcpPort();
+        int portB = b.getNode().getTcpPort();
+        a.getNode().getPeerManager().onPeerDiscovered(
+                new PeerDiscoveryInfo(b.getNodeId(), "127.0.0.1", portB));
+        b.getNode().getPeerManager().onPeerDiscovered(
+                new PeerDiscoveryInfo(a.getNodeId(), "127.0.0.1", portA));
+    }
 
-                other.getNode().getPeerManager().onPeerDiscovered(
-                        new PeerDiscoveryInfo(nodeId, "127.0.0.1", thisPort, System.currentTimeMillis()));
-                robot.getNode().getPeerManager().onPeerDiscovered(
-                        new PeerDiscoveryInfo(otherId, "127.0.0.1", otherPort, System.currentTimeMillis()));
-            }
+    private void interconnectRobotWithPeers(AgvRobot robot) {
+        for (AgvRobot other : robots) {
+            connectPair(robot, other);
         }
     }
 
     private void interconnectAllRobots() {
         for (int i = 0; i < robots.size(); i++) {
             for (int j = i + 1; j < robots.size(); j++) {
-                AgvRobot r1 = robots.get(i);
-                AgvRobot r2 = robots.get(j);
-                if (!r1.isCrashed() && !r2.isCrashed() && r1.getNode() != null && r2.getNode() != null
-                        && r1.getNode().isRunning() && r2.getNode().isRunning()) {
-                    int p1 = r1.getNode().getActualTcpPort();
-                    int p2 = r2.getNode().getActualTcpPort();
-                    r1.getNode().getPeerManager().onPeerDiscovered(
-                            new PeerDiscoveryInfo(r2.getNodeId(), "127.0.0.1", p2, System.currentTimeMillis()));
-                    r2.getNode().getPeerManager().onPeerDiscovered(
-                            new PeerDiscoveryInfo(r1.getNodeId(), "127.0.0.1", p1, System.currentTimeMillis()));
-                }
+                connectPair(robots.get(i), robots.get(j));
             }
         }
     }
