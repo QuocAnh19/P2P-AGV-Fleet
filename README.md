@@ -101,11 +101,11 @@ Giải quyết tranh chấp ngã tư (`cellId`) không có điểm nghẽn trung
 
 ### 3.3. Tầng Đấu thầu Phân tán Contract Net Protocol (`CnpEngine`)
 Phân bổ nhiệm vụ vận chuyển hàng hóa tự động phi tập trung (Multi-Agent System):
-1. **Hàm Mục tiêu Chi phí (Cost Function)**:
-   $$C = 0.5 \times d_{\text{pickup}} + 0.3 \times (100 - B) + 0.2 \times W_{\text{maintenance}}$$
-   - $d_{\text{pickup}} = \sqrt{(x_{\text{pickup}} - x_{\text{agv}})^2 + (y_{\text{pickup}} - y_{\text{agv}})^2}$: Khoảng cách di chuyển tới điểm nhận hàng.
-   - $B \in [0.0, 100.0]$: Mức pin hiện tại của AGV (%).
-   - $W_{\text{maintenance}}$: Trọng số bảo trì kỹ thuật của xe.
+1. **Hàm Mục tiêu Chi phí Đa tiêu chí Chuẩn hóa (Normalized Multi-Criteria Cost Function)**:
+   $$\text{Cost} = 0.45 \times \text{normDist} + 0.25 \times \text{normBattery} + 0.30 \times \text{costLoad}$$
+   - $\text{normDist} = \min\left(1.0, \frac{d_{\text{pickup}}}{D_{\text{map}}}\right)$: Khoảng cách Manhattan chuẩn hóa tới điểm nhận hàng ($D_{\text{map}} = 30.0\text{m}$).
+   - $\text{normBattery} = \frac{100.0 - B}{100.0}$: Độ cạn kiệt pin chuẩn hóa từ mức pin hiện tại $B \in [0.0, 100.0]\%$.
+   - $\text{costLoad} = \min\left(1.0, \frac{N_{\text{recent}}}{3.0}\right)$: Hệ số phạt cân bằng tải dựa trên số lượng đơn hàng đã nhận trong 60 giây gần nhất ($N_{\text{recent}}$), giúp phân bổ đều công việc cho cả đội xe thay vì dồn đơn cho 1 xe duy nhất.
 2. **Quy tắc An toàn Pin (Battery Safety Rule)**:
    - Nếu $B \le 15.0\%$ (Ngưỡng `LOW_BATTERY_THRESHOLD`), AGV kiên quyết từ chối nộp thầu và tự động chuyển trạng thái sang `LOW_BATTERY_CHARGING` để bảo vệ pin.
 3. **Mô hình Trạng thái Tác tử Đầy đủ (`AgentState`)**:
@@ -119,6 +119,9 @@ Phân bổ nhiệm vụ vận chuyển hàng hóa tự động phi tập trung (
 4. **Khả năng Chịu lỗi (Fault-Tolerance)**:
    - **Thầu phụ (Contractor) sập giữa chừng**: Node quản lý phát hiện mất kết nối qua Heartbeat, tự động hủy phân bổ và tái phát thầu (`re-announce`) để không bị thất lạc đơn hàng.
    - **Chủ thầu (Manager) sập**: Các xe đang trong trạng thái `BIDDING` tự động hủy gói thầu và hoàn nguyên về `IDLE`.
+5. **Bộ Điều Phối Tác Vụ Tự Động (`ContinuousTaskDriver`)**:
+   - **Chế độ 1 Vòng tuần hoàn mục tiêu (Single Task Cycle - Mặc định khi khởi động)**: Tự động phát thầu 1 nhiệm vụ mục tiêu, theo dõi AGV thắng thầu di chuyển đến khi giao hàng hoàn tất (`COMPLETED`), sau đó **tự động dừng phát việc mới**. Hệ thống hiển thị thông báo và trạng thái rõ ràng để người dùng dừng lại phân tích chi tiết toàn bộ luồng gửi nhận và các gói tin trao đổi P2P (`TASK_ANNOUNCE`, `TASK_BID`, `TASK_AWARD`, `MUTEX_REQUEST`, `MUTEX_REPLY`, `TASK_COMPLETE`).
+   - **Điều khiển trực quan**: Bấm nút **`▶ Chạy tiếp 1 chu kỳ`** (hoặc phím tắt **`[C]`**) để chạy thêm 1 chu kỳ mục tiêu nữa bất cứ lúc nào, hoặc chuyển đổi sang **Chế độ Chạy liên tục (Continuous)** từ menu tiện ích `⋯`.
 
 ### 3.4. Tầng Pub/Sub Overlay (`TopicRouter`) & Bảng Vị trí Động (`PeerPositionTable`)
 1. **Overlay Topic Router (`TopicRouter`)**:
@@ -164,29 +167,41 @@ D:/HK_V/P2P_AGV_Fleet/Project
 ├── .gitignore
 ├── README.md
 ├── ARCHITECTURE_AND_WORKFLOW.md
+├── docs
+│   └── benchmarks/                               # Kết quả đo benchmark (latency, throughput, CSV)
 └── src
     ├── main
     │   ├── java
     │   │   └── com/agv/fleet
     │   │       ├── Main.java                     # Lớp chạy chính khởi chạy JavaFX App
+    │   │       ├── benchmark/                    # Công cụ đo kiểm hiệu năng Headless
+    │   │       │   ├── BenchmarkUtils.java
+    │   │       │   ├── CodecThroughputBenchmark.java
+    │   │       │   ├── LatencyBenchmark.java
+    │   │       │   └── MeshThroughputBenchmark.java
+    │   │       ├── cli/
+    │   │       │   └── NodeCli.java              # Giao diện dòng lệnh CLI tương tác từng node
     │   │       ├── common/protocol
-    │   │       │   ├── Opcode.java               # Enum 8 mã Opcode kèm O(1) lookup
+    │   │       │   ├── Opcode.java               # Enum các mã Opcode kèm O(1) lookup
     │   │       │   ├── AgvHeader.java            # Record bất biến (Đúng 36 Bytes Fixed Header)
     │   │       │   ├── AgvMessage.java           # Domain Model + Factory tính CRC32 tự động
     │   │       │   └── payload
-    │   │       │       ├── MutexRequestPayload.java # Payload nhị phân xin ngã tư
-    │   │       │       ├── MutexReplyPayload.java   # Payload nhị phân chấp thuận
-    │   │       │       ├── MutexReleasePayload.java # Payload nhị phân giải phóng
+    │   │       │       ├── MutexRequestPayload.java # Payload nhị phân xin ngã tư (0x10)
+    │   │       │       ├── MutexReplyPayload.java   # Payload nhị phân chấp thuận (0x11)
+    │   │       │       ├── MutexReleasePayload.java # Payload nhị phân giải phóng (0x12)
     │   │       │       ├── TaskAnnouncePayload.java # Payload nhị phân phát thầu (0x20)
     │   │       │       ├── TaskBidPayload.java      # Payload nhị phân nộp thầu (0x21)
-    │   │       │       └── TaskAwardPayload.java    # Payload nhị phân trao thầu (0x22)
+    │   │       │       ├── TaskAwardPayload.java    # Payload nhị phân trao thầu (0x22)
+    │   │       │       ├── TaskCompletePayload.java # Payload nhị phân hoàn tất (0x23)
+    │   │       │       ├── PositionUpdatePayload.java # Payload nhị phân vị trí xe (0x03)
+    │   │       │       └── PingPongPayload.java     # Payload đo trễ RTT (0x04/0x05)
     │   │       ├── distributed
     │   │       │   ├── clock
     │   │       │   │   └── LamportClock.java     # Đồng hồ logic Lamport thread-safe
     │   │       │   ├── mutex
     │   │       │   │   ├── MutexState.java       # RELEASED, WANTED, HELD
     │   │       │   │   ├── CellMutex.java        # State container cho từng ô ngã tư
-    │   │       │   │   └── RicartAgrawalaEngine.java # Máy thuật toán Ricart-Agrawala
+    │   │       │   │   └── RicartAgrawalaEngine.java # Thuật toán Ricart-Agrawala Mutex
     │   │       │   └── auction
     │   │       │       ├── AuctionSession.java   # Phiên đấu thầu theo dõi bids và timeout
     │   │       │       ├── TaskAssignmentListener.java # Listener sự kiện trúng thầu
@@ -198,6 +213,8 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │   ├── discovery
     │   │       │   │   ├── PeerDiscoveryInfo.java# Record thông tin quảng bá UDP
     │   │       │   │   └── UdpPeerDiscovery.java # Netty DatagramChannel UDP Multicast
+    │   │       │   ├── overlay
+    │   │       │   │   └── TopicRouter.java      # Định tuyến thông điệp Pub/Sub linh hoạt
     │   │       │   └── mesh
     │   │       │       ├── PeerSession.java      # Quản lý phiên kết nối TCP và nhịp tim
     │   │       │       ├── PeerLifecycleListener.java # Callback onPeerConnected & onPeerDropped
@@ -214,52 +231,106 @@ D:/HK_V/P2P_AGV_Fleet/Project
     │   │       │   │   ├── AgvBattery.java       # Quản lý pin thread-safe (ngưỡng 15%)
     │   │       │   │   ├── Position2D.java       # Tọa độ không gian 2D liên tục
     │   │       │   │   ├── Task.java             # Quản lý vòng đời đơn vận chuyển hàng
-    │   │       │   │   └── AgvRobot.java         # Điều phối Robot: A*, Mutex, CNP, Chuyển động
+    │   │       │   │   ├── AgvRobot.java         # Điều phối Robot: A*, Mutex, CNP, Chuyển động
+    │   │       │   │   └── PeerPositionTable.java# Bảng giám sát không gian vị trí các xe
     │   │       │   ├── map
     │   │       │   │   ├── CellType.java         # EMPTY, OBSTACLE, INTERSECTION, CHARGING_STATION
     │   │       │   │   ├── GridPoint.java        # Tọa độ nguyên rời rạc 2D
     │   │       │   │   └── GridMap.java          # Bản đồ kho hàng lưới 24x16
     │   │       │   └── navigation
     │   │       │       └── DynamicAStarPathfinder.java # Thuật toán tìm đường Dynamic A*
+    │   │       ├── scenario/
+    │   │       │   └── ScenarioRunner.java       # Bộ kịch bản S1, S2, S3 chạy headless
     │   │       └── ui
-    │   │           └── AgvFleetSimulatorApp.java # Giao diện Dashboard mô phỏng JavaFX Canvas 2D
+    │   │           ├── AgvFleetSimulatorApp.java # Giao diện Dashboard mô phỏng JavaFX Canvas 2D
+    │   │           ├── ContinuousTaskDriver.java # Bộ điều phối tác vụ (Single Cycle & Continuous Mode)
+    │   │           ├── MapScaleHelper.java       # Tính toán co giãn bản đồ responsive
+    │   │           ├── metrics/
+    │   │           │   └── FleetMetricsCollector.java # Thu thập số liệu KPI, thời gian phản hồi
+    │   │           ├── panel/                    # Các panel giao diện chuyên trách
+    │   │           │   ├── MetricsPanel.java
+    │   │           │   ├── WireTrafficPanel.java
+    │   │           │   ├── ScenarioBannerOverlay.java
+    │   │           │   ├── PeersPanel.java
+    │   │           │   ├── PerNodePanel.java
+    │   │           │   └── TimelinePanel.java
+    │   │           ├── scenario/                 # Điều khiển kịch bản mô phỏng trên UI
+    │   │           │   ├── UiScenarioController.java
+    │   │           │   ├── UiScenarioResult.java
+    │   │           │   ├── UiScenarioType.java
+    │   │           │   └── UiScenarioListener.java
+    │   │           ├── simulation/
+    │   │           │   └── PhysicsLoopController.java # Quản lý nhịp vật lý discrete 4 Hz
+    │   │           └── traffic/
+    │   │               ├── WireMessageEntry.java
+    │   │               └── WireTrafficLog.java   # Nhật ký gói tin mạng P2P Wire
     │   └── resources
     │       └── logback.xml                       # Cấu hình log Logback
     └── test
         └── java
             └── com/agv/fleet
-                ├── common/protocol/payload
-                │   ├── MutexPayloadTest.java     # 3 Tests serialization mutex payload
-                │   └── CnpPayloadTest.java       # 4 Tests serialization CNP payload
-                ├── distributed
-                │   ├── clock
-                │   │   └── LamportClockTest.java # 3 Tests đồng hồ Lamport
-                │   ├── mutex
-                │   │   └── RicartAgrawalaTest.java# 3 Integration Tests Ricart-Agrawala
-                │   └── auction
-                │       └── CnpAuctionTest.java   # 4 Integration Tests đấu thầu CNP
-                ├── core
-                │   ├── map
-                │   │   └── GridMapTest.java      # 3 Tests mô hình bản đồ kho hàng
-                │   └── navigation
-                │       └── AStarPathfinderTest.java # 5 Tests thuật toán tìm đường A*
-                └── network
-                    ├── codec
-                    │   └── AgvCodecTest.java     # 8 Unit Tests kiểm thử tầng Binary Codec
-                    └── mesh
-                        └── P2PMeshIntegrationTest.java # 3 Integration Tests đa node Full-Mesh
+                ├── common/
+                │   ├── Slf4jFormatSpecifierTest.java
+                │   └── protocol/payload/
+                │       ├── MutexPayloadTest.java
+                │       └── CnpPayloadTest.java
+                ├── distributed/
+                │   ├── clock/LamportClockTest.java
+                │   ├── mutex/
+                │   │   ├── RicartAgrawalaTest.java
+                │   │   ├── LateJoiningPeerMutexTest.java
+                │   │   └── NodeCrashAndFreezeMutexTest.java
+                │   └── auction/
+                │       ├── CnpAuctionTest.java
+                │       ├── FairTaskAllocationTest.java
+                │       ├── TaskCompletionFaultToleranceTest.java
+                │       └── BiddingStuckResolutionTest.java
+                ├── core/
+                │   ├── map/GridMapTest.java
+                │   ├── navigation/
+                │   │   ├── AStarPathfinderTest.java
+                │   │   └── HeadOnCorridorCollisionTest.java
+                │   ├── agent/AgvRobotBatterySafetyTest.java
+                │   └── AgvNodeRecoverTest.java
+                ├── network/
+                │   ├── codec/AgvCodecTest.java
+                │   ├── mesh/
+                │   │   ├── P2PMeshIntegrationTest.java
+                │   │   ├── PeerPositionTableTest.java
+                │   │   └── PingPongTest.java
+                │   └── overlay/TopicRouterTest.java
+                ├── scenario/ScenarioRunnerSmokeTest.java
+                ├── headless/
+                │   ├── AutoDemoHeadlessTest.java
+                │   └── FreeRunningSmokeHeadlessTest.java
+                └── ui/
+                    ├── ContinuousTaskDriverTest.java
+                    ├── ContinuousTaskDriverSmokeTest.java
+                    ├── MapScaleHelperTest.java
+                    ├── metrics/FleetMetricsCollectorTest.java
+                    ├── scenario/
+                    │   ├── UiScenarioControllerTest.java
+                    │   └── UiScenarioTest.java
+                    ├── simulation/PhysicsLoopControllerTest.java
+                    └── traffic/WireTrafficLogTest.java
 ```
 
 ---
 
 ## 5. Kết quả Kiểm thử (Unit & Integration Tests)
 
-Toàn bộ **36 bài kiểm thử** đều vượt qua 100%:
+Toàn bộ **106 bài kiểm thử** (Unit, Integration, Mesh, Concurrency, UI & Headless Benchmarks) đều vượt qua 100%:
 
 ```
 [INFO] -------------------------------------------------------
 [INFO]  T E S T S
 [INFO] -------------------------------------------------------
+[INFO] Tests run: 106, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+```
 [INFO] Running com.agv.fleet.common.protocol.payload.CnpPayloadTest
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.052 s
 [INFO] Running com.agv.fleet.common.protocol.payload.MutexPayloadTest

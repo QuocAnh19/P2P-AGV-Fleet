@@ -237,18 +237,30 @@ stateDiagram-v2
 6. **`LOW_BATTERY_CHARGING`**: Mức pin $\le 15\%$, xe từ chối đấu thầu và tìm đường về trạm sạc.
 7. **`CRASHED`**: Xe bị ngắt nguồn, treo tiến trình hoặc sập mạng (được kích hoạt để thử nghiệm khả năng tự phục hồi của đội xe).
 
-### 5.2. Hàm Tính Toán Chi Phí Đấu Thầu (Cost Function)
+### 5.2. Hàm Tính Toán Chi Phí Đấu Thầu Đa Tiêu Chí (Normalized Multi-Criteria Cost Function)
 
-Mỗi xe AGV khi nhận bản tin phát thầu `TASK_ANNOUNCE` sẽ tự động tính hàm chi phí:
+Mỗi xe AGV khi nhận bản tin phát thầu `TASK_ANNOUNCE` sẽ tự động tính toán hàm chi phí chuẩn hóa đa tiêu chí kết hợp cân bằng tải:
 
-$$C = 0.5 \times d_{\text{pickup}} + 0.3 \times (100.0 - B) + 0.2 \times W_{\text{maintenance}}$$
+$$\text{Cost} = 0.45 \times \text{normDist} + 0.25 \times \text{normBattery} + 0.30 \times \text{costLoad}$$
 
 Trong đó:
-- $d_{\text{pickup}} = \sqrt{(x_{\text{pickup}} - x_{\text{agv}})^2 + (y_{\text{pickup}} - y_{\text{agv}})^2}$: Khoảng cách di chuyển đến điểm lấy hàng. Trọng số $0.5$ ưu tiên xe ở gần.
-- $B \in [0.0, 100.0]$: Mức pin hiện tại của xe. $(100 - B)$ là độ cạn kiệt pin. Trọng số $0.3$ phạt nặng xe có mức pin thấp.
-- $W_{\text{maintenance}}$: Trọng số hao mòn thiết bị và chu kỳ bảo dưỡng (mặc định $1.0$).
+- $\text{normDist} = \min\left(1.0, \frac{d_{\text{pickup}}}{D_{\text{map}}}\right)$: Khoảng cách Manhattan chuẩn hóa tới điểm nhận hàng ($D_{\text{map}} = 30.0\text{m}$). Trọng số $0.45$ ưu tiên xe ở gần.
+- $\text{normBattery} = \frac{100.0 - B}{100.0}$: Độ hao hụt pin chuẩn hóa từ mức pin hiện tại $B \in [0.0, 100.0]\%$. Trọng số $0.25$ phạt xe có pin yếu.
+- $\text{costLoad} = \min\left(1.0, \frac{N_{\text{recent}}}{3.0}\right)$: Hệ số phạt phụ tải dựa trên số lượng đơn hàng xe đã trúng trong 60 giây gần nhất ($N_{\text{recent}}$). Trọng số $0.30$ giúp chia đều nhiệm vụ cho các xe trong đội, tránh tình trạng 1 xe gánh toàn bộ công việc.
+- **Quy tắc an toàn pin**: Nếu $B \le 15.0\%$ (`LOW_BATTERY_THRESHOLD`), xe kiên quyết từ chối nộp thầu và tự động chuyển sang trạng thái `LOW_BATTERY_CHARGING` để quay về trạm sạc.
 
-### 5.3. Luồng Đấu Thầu Thích Ứng (Adaptive Auction Workflow)
+### 5.3. Bộ Điều Phối Tác Vụ Tự Động & Chế Độ 1 Chu Kỳ Mục Tiêu (`ContinuousTaskDriver`)
+
+Để phục vụ trình diễn, kiểm thử và phân tích luồng dữ liệu P2P chuyên sâu:
+1. **Chế độ 1 Chu kỳ Mục tiêu (Single Task Cycle Mode - Mặc định khi khởi động)**:
+   - Khi ứng dụng vừa chạy, hệ thống phát thầu đúng 1 đơn hàng mục tiêu.
+   - Xe trúng thầu di chuyển đến điểm lấy hàng, xin quyền ngã tư Ricart-Agrawala, vận chuyển đến điểm giao và cập nhật `COMPLETED`.
+   - Ngay khi hoàn tất đơn hàng, hệ thống **tự động dừng phát việc mới**, hiển thị thông báo kết thúc chu kỳ trên banner và live feed để người dùng dừng lại phân tích luồng gửi/nhận và các bản tin nhị phân.
+2. **Khả năng Điều khiển Linh hoạt**:
+   - Bấm nút **`▶ Chạy tiếp 1 chu kỳ`** (hoặc nhấn phím tắt **`[C]`**) để chạy thêm 1 chu kỳ mục tiêu tiếp theo.
+   - Chuyển đổi sang **Chế độ Chạy liên tục (Continuous Mode)** qua menu tiện ích `⋯` khi muốn quan sát đội xe vận hành liên tục không ngừng nghỉ.
+
+### 5.4. Luồng Đấu Thầu Thích Ứng (Adaptive Auction Workflow)
 
 ```mermaid
 sequenceDiagram
@@ -262,9 +274,9 @@ sequenceDiagram
     Mgr->>AGV3: TASK_ANNOUNCE (Task-1, Pickup: 0,0)
 
     Note over AGV2: Pin 10% <= 15% (Ngưỡng an toàn!)<br/>Từ chối thầu -> Chuyển sang LOW_BATTERY_CHARGING
-    Note over AGV3: Pin 90% > 15%, Trạng thái IDLE<br/>Cost = 0.5*8 + 0.3*10 + 0.2*1 = 7.2<br/>Chuyển sang BIDDING
+    Note over AGV3: Pin 90% > 15%, Trạng thái IDLE<br/>Tính Cost đa tiêu chí chuẩn hóa<br/>Chuyển sang BIDDING
 
-    AGV3->>Mgr: TASK_BID (Task-1, Cost: 7.2, Pin: 90%)
+    AGV3->>Mgr: TASK_BID (Task-1, Cost, Pin: 90%)
     Note over Mgr: Chờ hết Auction Timeout (500ms)<br/>Thu thập danh sách Bids<br/>AGV 3 có Cost tối ưu nhất!
 
     Mgr->>AGV2: TASK_AWARD (Task-1, Winner: AGV 3)
