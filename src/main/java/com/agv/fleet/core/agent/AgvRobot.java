@@ -462,6 +462,15 @@ public class AgvRobot {
     }
 
     private void handleArrivalAtDestination() {
+        if (heldIntersectionCellId != null) {
+            log.info("AGV {}: Arrived at destination in intersection {}. Releasing MUTEX.",
+                    node.getNodeId(), heldIntersectionCellId);
+            try {
+                node.releaseIntersection(heldIntersectionCellId);
+            } catch (Exception ignored) {}
+            heldIntersectionCellId = null;
+        }
+
         if (currentTask != null) {
             if (!carryingCargo) {
                 // Arrived at Pickup!

@@ -13,6 +13,7 @@ import com.agv.fleet.core.map.GridMap;
 import com.agv.fleet.core.map.GridPoint;
 import com.agv.fleet.core.navigation.DynamicAStarPathfinder;
 import com.agv.fleet.distributed.mutex.MutexState;
+import com.agv.fleet.network.discovery.PeerDiscoveryInfo;
 import com.agv.fleet.network.mesh.PeerSession;
 import com.agv.fleet.ui.metrics.FleetMetricsCollector;
 import com.agv.fleet.ui.panel.MetricsPanel;
@@ -998,30 +999,32 @@ public class AgvFleetSimulatorApp extends Application {
 
         if (vehicleCount == 2) {
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(ix - 4, iy), 100.0, "Pallet AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 4), 100.0, "Pallet AGV-2", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 3), 100.0, "Pallet AGV-2", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(400, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.updateS1Step2();
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: Cả 2 xe đồng thời tiến vào ngã tư. Thuật toán Ricart-Agrawala giải quyết quyền ưu tiên...");
                 r1.setDestination(new GridPoint(ix + 4, iy));
-                r2.setDestination(new GridPoint(ix, iy + 4));
+                r2.setDestination(new GridPoint(ix, iy + 3));
                 r1.getNode().setAgentState(AgentState.MOVING);
                 r2.getNode().setAgentState(AgentState.MOVING);
             }));
         } else {
             // 4 vehicles
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(ix - 4, iy), 100.0, "Pallet AGV-1", 1.0);
-            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 4), 100.0, "Pallet AGV-2", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(ix, iy - 3), 100.0, "Pallet AGV-2", 1.0);
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(ix + 4, iy), 100.0, "Pallet AGV-3", 1.0);
-            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(ix, iy + 4), 100.0, "Pallet AGV-4", 1.0);
+            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(ix, iy + 3), 100.0, "Pallet AGV-4", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.updateS1Step2();
                 scenarioBannerOverlay.updateStepBanner("Bước 2/3: 4 xe từ 4 hướng cùng xin vào ngã tư (7, 6)...");
                 r1.setDestination(new GridPoint(ix + 4, iy));
-                r2.setDestination(new GridPoint(ix, iy + 4));
+                r2.setDestination(new GridPoint(ix, iy + 3));
                 r3.setDestination(new GridPoint(ix - 4, iy));
-                r4.setDestination(new GridPoint(ix, iy - 4));
+                r4.setDestination(new GridPoint(ix, iy - 3));
                 r1.getNode().setAgentState(AgentState.MOVING);
                 r2.getNode().setAgentState(AgentState.MOVING);
                 r3.getNode().setAgentState(AgentState.MOVING);
@@ -1074,6 +1077,7 @@ public class AgvFleetSimulatorApp extends Application {
                     "Bước 1/3: Khởi tạo 2 xe: AGV 1 (90% Pin - Phát thầu), AGV 2 (80% Pin - Đấu thầu)...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "Announcer AGV-1 (90%)", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 80.0, "Contractor AGV-2 (80%)", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 Task task = new Task("TASK-CNP-DEMO", 7, 6, 17, 6, Task.Priority.HIGH, "Pallet Gỗ");
@@ -1090,6 +1094,7 @@ public class AgvFleetSimulatorApp extends Application {
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(2, 6), 10.0, "LowBat AGV-2 (10%)", 1.0);
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(7, 2), 85.0, "HighBat AGV-3 (85%)", 1.0);
             AgvRobot r4 = createAndStartRobot(4L, new GridPoint(12, 2), 50.0, "MidBat AGV-4 (50%)", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 Task task = new Task("TASK-CNP-DEMO", 7, 6, 17, 6, Task.Priority.HIGH, "Hàng Linh Kiện");
@@ -1147,6 +1152,7 @@ public class AgvFleetSimulatorApp extends Application {
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Announcer AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 90.0, "Contractor AGV-2", 1.0);
             AgvRobot r3 = createAndStartRobot(3L, new GridPoint(12, 2), 90.0, "Backup AGV-3", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 Task task = new Task("TASK-REALLOC-S3", 7, 6, 17, 6);
@@ -1169,6 +1175,7 @@ public class AgvFleetSimulatorApp extends Application {
                     "Bước 1/2: Khởi tạo AGV 1 (Monitor) và AGV 2 (Worker) kết nối P2P...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 100.0, "Monitor AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 90.0, "Worker AGV-2", 1.0);
+            interconnectAllRobots();
 
             CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
                 scenarioController.notifyStep(2, 2, "Bước 2/2: AGV 2 ngừng gửi heartbeat (Freeze network). AGV 1 đếm timeout...");
@@ -1191,6 +1198,7 @@ public class AgvFleetSimulatorApp extends Application {
                     "Bước 1/2: AGV 1 đang chiếm giữ ngã tư (7, 6). AGV 2 đang tiến tới ngã tư...");
             AgvRobot r1 = createAndStartRobot(1L, new GridPoint(7, 6), 100.0, "Holding AGV-1", 1.0);
             AgvRobot r2 = createAndStartRobot(2L, new GridPoint(7, 2), 100.0, "Waiting AGV-2", 1.0);
+            interconnectAllRobots();
 
             String cellId = map.getIntersectionCellId(7, 6);
 
@@ -2088,6 +2096,7 @@ public class AgvFleetSimulatorApp extends Application {
         AgvRobot r5 = createAndStartRobot(5L, new GridPoint(4, 12), 40.0, "Compact AGV-5", 1.0);
         AgvRobot r6 = createAndStartRobot(6L, new GridPoint(18, 14), 30.0, "Heavy Cargo AGV-6", 1.0);
         nextNodeId.set(7);
+        interconnectAllRobots();
 
         // Khởi động di chuyển ngay lập tức để màn hình luôn có xe lăn bánh ngay khi mở app
         // Các điểm đến đều là ô hành lang di chuyển được (walkable aisle)
@@ -2222,10 +2231,48 @@ public class AgvFleetSimulatorApp extends Application {
         try {
             node.start();
             robots.add(robot);
+            interconnectRobotWithPeers(robot);
         } catch (Exception e) {
             log.error("Failed to start AGV node {}", nodeId, e);
         }
         return robot;
+    }
+
+    private void interconnectRobotWithPeers(AgvRobot robot) {
+        if (robot == null || robot.isCrashed() || robot.getNode() == null || !robot.getNode().isRunning()) {
+            return;
+        }
+        long nodeId = robot.getNodeId();
+        int thisPort = robot.getNode().getActualTcpPort();
+        for (AgvRobot other : robots) {
+            if (other != robot && !other.isCrashed() && other.getNode() != null && other.getNode().isRunning()) {
+                long otherId = other.getNodeId();
+                int otherPort = other.getNode().getActualTcpPort();
+
+                other.getNode().getPeerManager().onPeerDiscovered(
+                        new PeerDiscoveryInfo(nodeId, "127.0.0.1", thisPort, System.currentTimeMillis()));
+                robot.getNode().getPeerManager().onPeerDiscovered(
+                        new PeerDiscoveryInfo(otherId, "127.0.0.1", otherPort, System.currentTimeMillis()));
+            }
+        }
+    }
+
+    private void interconnectAllRobots() {
+        for (int i = 0; i < robots.size(); i++) {
+            for (int j = i + 1; j < robots.size(); j++) {
+                AgvRobot r1 = robots.get(i);
+                AgvRobot r2 = robots.get(j);
+                if (!r1.isCrashed() && !r2.isCrashed() && r1.getNode() != null && r2.getNode() != null
+                        && r1.getNode().isRunning() && r2.getNode().isRunning()) {
+                    int p1 = r1.getNode().getActualTcpPort();
+                    int p2 = r2.getNode().getActualTcpPort();
+                    r1.getNode().getPeerManager().onPeerDiscovered(
+                            new PeerDiscoveryInfo(r2.getNodeId(), "127.0.0.1", p2, System.currentTimeMillis()));
+                    r2.getNode().getPeerManager().onPeerDiscovered(
+                            new PeerDiscoveryInfo(r1.getNodeId(), "127.0.0.1", p1, System.currentTimeMillis()));
+                }
+            }
+        }
     }
 
     private void logWireMessage(long receiverId, AgvMessage msg) {
@@ -2415,6 +2462,7 @@ public class AgvFleetSimulatorApp extends Application {
         crashRebootBtn.setOnAction(e -> {
             if (robot.isCrashed()) {
                 robot.recover();
+                interconnectRobotWithPeers(robot);
                 addLiveFeed("AGV #" + robot.getNodeId() + " đã khởi động lại (Reboot)", Color.web("#10B981"));
             } else {
                 robot.crash();
