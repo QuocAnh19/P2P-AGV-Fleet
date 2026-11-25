@@ -89,14 +89,20 @@ public class UiScenarioTest {
         controller.recordBid(1, 8.5, 90.0, true);
         assertTrue(bidLogged.get());
 
-        // Node 1 wins, Node 5 did not bid -> PASS
-        UiScenarioResult passResult = controller.finishS2Scenario(1L, 8.5, false);
-        assertTrue(passResult.passed());
-        assertTrue(passResult.summary().contains("PASS"));
+        // 4 vehicles: Node 3 wins, Node 2 (low battery) did not bid -> PASS
+        UiScenarioResult passResult4 = controller.finishS2Scenario(3L, 8.5, false, 4);
+        assertTrue(passResult4.passed());
+        assertTrue(passResult4.summary().contains("PASS"));
 
-        // If Node 5 won or bid -> FAIL
-        UiScenarioResult failResult = controller.finishS2Scenario(5L, 2.0, true);
-        assertFalse(failResult.passed());
+        // If Node 2 (low battery) bid or won -> FAIL
+        UiScenarioResult failResult4 = controller.finishS2Scenario(2L, 2.0, true, 4);
+        assertFalse(failResult4.passed());
+
+        // 2 vehicles: Node 2 wins -> PASS
+        controller.startS2Scenario(2);
+        UiScenarioResult passResult2 = controller.finishS2Scenario(2L, 7.2, false, 2);
+        assertTrue(passResult2.passed());
+        assertTrue(passResult2.summary().contains("PASS"));
     }
 
     @Test

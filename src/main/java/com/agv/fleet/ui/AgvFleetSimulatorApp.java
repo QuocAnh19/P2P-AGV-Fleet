@@ -150,8 +150,10 @@ public class AgvFleetSimulatorApp extends Application {
     // Visual Auction & Mutex Animation State
     private volatile Long cnpVisualAnnouncerId = null;
     private final Map<Long, Double> cnpVisualBids = new ConcurrentHashMap<>();
+    private final Map<Long, Double> cnpVisualBidBatteries = new ConcurrentHashMap<>();
     private volatile Long cnpVisualWinnerId = null;
     private volatile long cnpVisualTimestamp = 0;
+    private volatile int s2VehicleCount = 4;
     private final Map<String, Long> mutexRequestTimestamps = new ConcurrentHashMap<>();
 
     // Selection & Inspection
@@ -359,8 +361,8 @@ public class AgvFleetSimulatorApp extends Application {
         MenuItem s1Item = new MenuItem("S1: Đối đầu ngã tư (2/4 xe) [Phím 1]");
         s1Item.setOnAction(e -> runScenarioS1(2));
 
-        MenuItem s2Item = new MenuItem("S2: Đấu thầu thích ứng mức pin [Phím 2]");
-        s2Item.setOnAction(e -> runScenarioS2());
+        MenuItem s2Item = new MenuItem("S2: Đấu thầu thích ứng pin (2/4 xe) [Phím 2]");
+        s2Item.setOnAction(e -> runScenarioS2(4));
 
         MenuItem s3Item = new MenuItem("S3: Mô phỏng lỗi & sập node [Phím 3]");
         s3Item.setOnAction(e -> showS3ChoiceDialog());
@@ -1019,38 +1021,67 @@ public class AgvFleetSimulatorApp extends Application {
     }
 
     // =========================================================================
-    // 7. SCENARIO 2: ADAPTIVE CNP TASK AUCTION (5 AGVS WITH DIFFERENT BATTERY)
+    // 7. SCENARIO 2: ADAPTIVE CNP TASK AUCTION (2 OR 4 AGVS WITH DIFFERENT BATTERY)
     // =========================================================================
     public void runScenarioS2() {
+        runScenarioS2(4);
+    }
+
+    public void runScenarioS2(int vehicleCount) {
+        this.s2VehicleCount = (vehicleCount == 2) ? 2 : 4;
         scenarioBannerOverlay.hideVerdict();
         stopAndClearFleet();
         allTasks.clear();
         metricsCollector.reset();
 
-        scenarioController.startS2Scenario();
-        scenarioBannerOverlay.showBanner(UiScenarioType.S2_ADAPTIVE_AUCTION,
-                "Bước 1/3: Khởi tạo 5 xe với pin: AGV-1 (90%), AGV-2 (60%), AGV-3 (40%), AGV-4 (20%), AGV-5 (10%)...");
+        cnpVisualAnnouncerId = 1L;
+        cnpVisualBids.clear();
+        cnpVisualBidBatteries.clear();
+        cnpVisualWinnerId = null;
+        cnpVisualTimestamp = System.currentTimeMillis();
 
-        AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "AGV-1 (90% Bat)", 1.0);
-        AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 60.0, "AGV-2 (60% Bat)", 1.0);
-        AgvRobot r3 = createAndStartRobot(3L, new GridPoint(14, 6), 40.0, "AGV-3 (40% Bat)", 1.0);
-        AgvRobot r4 = createAndStartRobot(4L, new GridPoint(18, 10), 20.0, "AGV-4 (20% Bat)", 1.0);
-        AgvRobot r5 = createAndStartRobot(5L, new GridPoint(22, 14), 10.0, "AGV-5 (10% Bat)", 1.0);
+        scenarioController.startS2Scenario(s2VehicleCount);
 
-        CompletableFuture.delayedExecutor(1600, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
-            Task task = new Task("TASK-CNP-DEMO", 5, 5, 20, 6, Task.Priority.HIGH, "High-Value Electronics");
-            allTasks.add(task);
+        Button btn2 = new Button("2 Xe");
+        btn2.setStyle("-fx-background-color: #3B82F6; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
+        btn2.setOnAction(e -> runScenarioS2(2));
 
-            cnpVisualAnnouncerId = 1L;
-            cnpVisualBids.clear();
-            cnpVisualWinnerId = null;
-            cnpVisualTimestamp = System.currentTimeMillis();
+        Button btn4 = new Button("4 Xe");
+        btn4.setStyle("-fx-background-color: #06B6D4; -fx-text-fill: white; -fx-font-size: 10px; -fx-cursor: hand;");
+        btn4.setOnAction(e -> runScenarioS2(4));
 
-            scenarioController.updateS2Step2(task.getTaskId());
-            scenarioBannerOverlay.updateStepBanner("Bước 2/3: AGV 1 phát thầu TASK-CNP-DEMO. Các xe nộp báo giá cạnh tranh...");
+        scenarioBannerOverlay.setScenarioControls(btn2, btn4);
 
-            r1.getNode().announceTask(task);
-        }));
+        if (s2VehicleCount == 2) {
+            scenarioBannerOverlay.showBanner(UiScenarioType.S2_ADAPTIVE_AUCTION,
+                    "Bước 1/3: Khởi tạo 2 xe: AGV 1 (90% Pin - Phát thầu), AGV 2 (80% Pin - Đấu thầu)...");
+            AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "Announcer AGV-1 (90%)", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(8, 4), 80.0, "Contractor AGV-2 (80%)", 1.0);
+
+            CompletableFuture.delayedExecutor(1600, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                Task task = new Task("TASK-CNP-DEMO", 7, 5, 18, 6, Task.Priority.HIGH, "Pallet Gỗ");
+                allTasks.add(task);
+                scenarioController.updateS2Step2(task.getTaskId());
+                scenarioBannerOverlay.updateStepBanner("Bước 2/3: AGV 1 phát thầu. AGV 2 nộp báo giá và trúng thầu...");
+                r1.getNode().announceTask(task);
+            }));
+        } else {
+            // 4 vehicles
+            scenarioBannerOverlay.showBanner(UiScenarioType.S2_ADAPTIVE_AUCTION,
+                    "Bước 1/3: Khởi tạo 4 xe: AGV 1 (90%), AGV 2 (10% - Pin yếu), AGV 3 (85%), AGV 4 (50%)...");
+            AgvRobot r1 = createAndStartRobot(1L, new GridPoint(2, 2), 90.0, "Announcer AGV-1 (90%)", 1.0);
+            AgvRobot r2 = createAndStartRobot(2L, new GridPoint(5, 5), 10.0, "LowBat AGV-2 (10%)", 1.0);
+            AgvRobot r3 = createAndStartRobot(3L, new GridPoint(8, 4), 85.0, "HighBat AGV-3 (85%)", 1.0);
+            AgvRobot r4 = createAndStartRobot(4L, new GridPoint(18, 12), 50.0, "MidBat AGV-4 (50%)", 1.0);
+
+            CompletableFuture.delayedExecutor(1600, TimeUnit.MILLISECONDS).execute(() -> Platform.runLater(() -> {
+                Task task = new Task("TASK-CNP-DEMO", 7, 5, 20, 6, Task.Priority.HIGH, "Hàng Linh Kiện");
+                allTasks.add(task);
+                scenarioController.updateS2Step2(task.getTaskId());
+                scenarioBannerOverlay.updateStepBanner("Bước 2/3: AGV 1 phát thầu. AGV 2 từ chối vì pin yếu (<15%); AGV 3 & 4 nộp thầu cạnh tranh...");
+                r1.getNode().announceTask(task);
+            }));
+        }
     }
 
     // =========================================================================
@@ -1473,12 +1504,16 @@ public class AgvFleetSimulatorApp extends Application {
             }
         }
 
-        // 3. Draw Active CNP Task Auction Visualization
-        if (cnpVisualAnnouncerId != null && System.currentTimeMillis() - cnpVisualTimestamp < 4500) {
+        // 3. Draw Active CNP Task Auction Visualization (Prominent Canvas Overlay & Floating Badges)
+        boolean showCnpVisual = (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S2_ADAPTIVE_AUCTION)
+                || (cnpVisualAnnouncerId != null && System.currentTimeMillis() - cnpVisualTimestamp < 15000);
+
+        if (showCnpVisual && cnpVisualAnnouncerId != null) {
             robots.stream().filter(r -> r.getNodeId() == cnpVisualAnnouncerId).findFirst().ifPresent(announcer -> {
                 double ax = announcer.getRenderX() * currentCellSize + currentCellSize / 2;
                 double ay = announcer.getRenderY() * currentCellSize + currentCellSize / 2;
 
+                // 3a. Draw Beam Lines & Cost Labels to Bidder Robots
                 for (Map.Entry<Long, Double> entry : cnpVisualBids.entrySet()) {
                     long bidderId = entry.getKey();
                     double cost = entry.getValue();
@@ -1487,41 +1522,166 @@ public class AgvFleetSimulatorApp extends Application {
                         double bx = bidder.getRenderX() * currentCellSize + currentCellSize / 2;
                         double by = bidder.getRenderY() * currentCellSize + currentCellSize / 2;
 
-                        gc.setStroke(Color.web("#6366F1", 0.7));
-                        gc.setLineWidth(1.8);
-                        gc.setLineDashes(3.0, 3.0);
+                        gc.setStroke(Color.web("#818CF8", 0.75));
+                        gc.setLineWidth(2.0);
+                        gc.setLineDashes(4.0, 4.0);
                         gc.strokeLine(ax, ay, bx, by);
                         gc.setLineDashes(null);
 
                         double mx = (ax + bx) / 2;
                         double my = (ay + by) / 2;
-                        gc.setFill(Color.web("#1E1B4B", 0.85));
-                        gc.fillRoundRect(mx - 22, my - 7, 44, 14, 4, 4);
+                        gc.setFill(Color.web("#1E1B4B", 0.90));
+                        gc.fillRoundRect(mx - 25, my - 9, 50, 18, 5, 5);
                         gc.setStroke(Color.web("#818CF8"));
-                        gc.setLineWidth(1.0);
-                        gc.strokeRoundRect(mx - 22, my - 7, 44, 14, 4, 4);
+                        gc.setLineWidth(1.2);
+                        gc.strokeRoundRect(mx - 25, my - 9, 50, 18, 5, 5);
 
                         gc.setFill(Color.WHITE);
-                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
-                        gc.fillText(String.format(Locale.US, "C=%.1f", cost), mx - 16, my + 3.5);
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 9.5));
+                        gc.fillText(String.format(Locale.US, "Cost: %.1f", cost), mx - 20, my + 4);
                     });
                 }
 
-                if (cnpVisualWinnerId != null) {
-                    robots.stream().filter(r -> r.getNodeId() == cnpVisualWinnerId).findFirst().ifPresent(winner -> {
-                        double wx = winner.getRenderX() * currentCellSize + currentCellSize / 2;
-                        double wy = winner.getRenderY() * currentCellSize + currentCellSize / 2;
+                // 3b. Draw Floating Badges on Top of Each Relevant Robot
+                for (AgvRobot robot : robots) {
+                    double rx = robot.getRenderX() * currentCellSize + currentCellSize / 2;
+                    double ry = robot.getRenderY() * currentCellSize + currentCellSize / 2;
 
-                        gc.setStroke(Color.web("#10B981"));
-                        gc.setLineWidth(2.8);
-                        gc.strokeRoundRect(wx - 16, wy - 16, 32, 32, 6, 6);
-
-                        gc.setFill(Color.web("#065F46"));
-                        gc.fillRoundRect(wx - 26, wy - 26, 52, 12, 3, 3);
+                    if (robot.getNodeId() == cnpVisualAnnouncerId) {
+                        // Announcer Badge
+                        gc.setFill(Color.web("#0284C7", 0.92));
+                        gc.fillRoundRect(rx - 30, ry - 25, 60, 14, 4, 4);
+                        gc.setStroke(Color.web("#38BDF8"));
+                        gc.setLineWidth(1.0);
+                        gc.strokeRoundRect(rx - 30, ry - 25, 60, 14, 4, 4);
                         gc.setFill(Color.WHITE);
                         gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
-                        gc.fillText("🏆 WINNER", wx - 23, wy - 17);
-                    });
+                        gc.fillText("📢 PHÁT THẦU", rx - 26, ry - 15);
+                    } else if (cnpVisualWinnerId != null && robot.getNodeId() == cnpVisualWinnerId) {
+                        // Winner Robot Highlight & Badge
+                        gc.setStroke(Color.web("#10B981"));
+                        gc.setLineWidth(3.0);
+                        gc.strokeRoundRect(rx - 17, ry - 17, 34, 34, 6, 6);
+
+                        double cost = cnpVisualBids.getOrDefault(robot.getNodeId(), 0.0);
+                        gc.setFill(Color.web("#065F46", 0.95));
+                        gc.fillRoundRect(rx - 40, ry - 27, 80, 16, 4, 4);
+                        gc.setStroke(Color.web("#34D399"));
+                        gc.setLineWidth(1.2);
+                        gc.strokeRoundRect(rx - 40, ry - 27, 80, 16, 4, 4);
+                        gc.setFill(Color.WHITE);
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.5));
+                        gc.fillText(String.format(Locale.US, "🏆 THẮNG (c=%.1f)", cost), rx - 36, ry - 15);
+                    } else if (s2VehicleCount == 4 && robot.getNodeId() == 2L) {
+                        // Low Battery Rejected Badge
+                        gc.setFill(Color.web("#991B1B", 0.92));
+                        gc.fillRoundRect(rx - 42, ry - 25, 84, 15, 4, 4);
+                        gc.setStroke(Color.web("#EF4444"));
+                        gc.setLineWidth(1.0);
+                        gc.strokeRoundRect(rx - 42, ry - 25, 84, 15, 4, 4);
+                        gc.setFill(Color.WHITE);
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.0));
+                        gc.fillText("❌ PIN 10% TỪ CHỐI", rx - 38, ry - 14);
+                    } else if (cnpVisualWinnerId != null && cnpVisualBids.containsKey(robot.getNodeId())) {
+                        // Lost Bidder Badge
+                        double cost = cnpVisualBids.get(robot.getNodeId());
+                        gc.setFill(Color.web("#334155", 0.90));
+                        gc.fillRoundRect(rx - 36, ry - 25, 72, 14, 4, 4);
+                        gc.setStroke(Color.web("#64748B"));
+                        gc.setLineWidth(1.0);
+                        gc.strokeRoundRect(rx - 36, ry - 25, 72, 14, 4, 4);
+                        gc.setFill(Color.web("#E2E8F0"));
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 8.0));
+                        gc.fillText(String.format(Locale.US, "⛔ THUA (c=%.1f)", cost), rx - 32, ry - 15);
+                    }
+                }
+
+                // 3c. Draw CNP Live Auction Scoreboard Box in Upper-Right Corner of Canvas
+                double boardW = 320;
+                double boardH = (s2VehicleCount == 2) ? 115 : 155;
+                double boardX = Math.max(10, canvas.getWidth() - boardW - 14);
+                double boardY = 12;
+
+                gc.setFill(Color.web("#0B0F19", 0.92));
+                gc.fillRoundRect(boardX, boardY, boardW, boardH, 8, 8);
+                gc.setStroke(Color.web("#6366F1"));
+                gc.setLineWidth(1.5);
+                gc.strokeRoundRect(boardX, boardY, boardW, boardH, 8, 8);
+
+                // Scoreboard Header
+                gc.setFill(Color.web("#818CF8"));
+                gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
+                gc.fillText("⚡ BẢNG ĐẤU THẦU PHÂN TÁN (CNP AUCTION)", boardX + 12, boardY + 20);
+
+                gc.setFill(Color.web("#94A3B8"));
+                gc.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 9.5));
+                gc.fillText("Nhiệm vụ: TASK-CNP-DEMO | Phát thầu: AGV #1 (Pin 90%)", boardX + 12, boardY + 35);
+
+                gc.setStroke(Color.web("#334155"));
+                gc.setLineWidth(1.0);
+                gc.strokeLine(boardX + 10, boardY + 42, boardX + boardW - 10, boardY + 42);
+
+                // Scoreboard Rows
+                double rowY = boardY + 58;
+                gc.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 10));
+
+                if (s2VehicleCount == 2) {
+                    // Row AGV 1
+                    gc.setFill(Color.web("#38BDF8"));
+                    gc.fillText("• AGV #1 (90%): 📢 Phát thầu (Announcer)", boardX + 14, rowY);
+                    rowY += 20;
+
+                    // Row AGV 2
+                    if (cnpVisualWinnerId != null && cnpVisualWinnerId == 2L) {
+                        gc.setFill(Color.web("#34D399"));
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10));
+                        gc.fillText(String.format(Locale.US, "• AGV #2 (80%%): 🏆 TRÚNG THẦU (Cost: %.2f)", cnpVisualBids.getOrDefault(2L, 0.0)), boardX + 14, rowY);
+                    } else if (cnpVisualBids.containsKey(2L)) {
+                        gc.setFill(Color.web("#FDE047"));
+                        gc.fillText(String.format(Locale.US, "• AGV #2 (80%%): Nộp thầu (Cost: %.2f)", cnpVisualBids.get(2L)), boardX + 14, rowY);
+                    } else {
+                        gc.setFill(Color.web("#94A3B8"));
+                        gc.fillText("• AGV #2 (80%): Đang nộp thầu...", boardX + 14, rowY);
+                    }
+                } else {
+                    // Row AGV 1
+                    gc.setFill(Color.web("#38BDF8"));
+                    gc.fillText("• AGV #1 (90%): 📢 Phát thầu (Announcer)", boardX + 14, rowY);
+                    rowY += 20;
+
+                    // Row AGV 2
+                    gc.setFill(Color.web("#EF4444"));
+                    gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10));
+                    gc.fillText("• AGV #2 (10%): ❌ TỪ CHỐI THẦU (Pin < 15% an toàn)", boardX + 14, rowY);
+                    rowY += 20;
+
+                    // Row AGV 3
+                    gc.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 10));
+                    if (cnpVisualWinnerId != null && cnpVisualWinnerId == 3L) {
+                        gc.setFill(Color.web("#34D399"));
+                        gc.setFont(Font.font("Segoe UI", FontWeight.BOLD, 10));
+                        gc.fillText(String.format(Locale.US, "• AGV #3 (85%%): 🏆 TRÚNG THẦU (Cost: %.2f)", cnpVisualBids.getOrDefault(3L, 0.0)), boardX + 14, rowY);
+                    } else if (cnpVisualBids.containsKey(3L)) {
+                        gc.setFill(Color.web("#FDE047"));
+                        gc.fillText(String.format(Locale.US, "• AGV #3 (85%%): Đã nộp thầu (Cost: %.2f)", cnpVisualBids.get(3L)), boardX + 14, rowY);
+                    } else {
+                        gc.setFill(Color.web("#94A3B8"));
+                        gc.fillText("• AGV #3 (85%): Đang tính toán chi phí...", boardX + 14, rowY);
+                    }
+                    rowY += 20;
+
+                    // Row AGV 4
+                    gc.setFont(Font.font("Segoe UI", FontWeight.NORMAL, 10));
+                    if (cnpVisualWinnerId != null && cnpVisualWinnerId != 4L && cnpVisualBids.containsKey(4L)) {
+                        gc.setFill(Color.web("#94A3B8"));
+                        gc.fillText(String.format(Locale.US, "• AGV #4 (50%%): ⛔ Thua thầu (Cost: %.2f)", cnpVisualBids.get(4L)), boardX + 14, rowY);
+                    } else if (cnpVisualBids.containsKey(4L)) {
+                        gc.setFill(Color.web("#FDE047"));
+                        gc.fillText(String.format(Locale.US, "• AGV #4 (50%%): Đã nộp thầu (Cost: %.2f)", cnpVisualBids.get(4L)), boardX + 14, rowY);
+                    } else {
+                        gc.setFill(Color.web("#94A3B8"));
+                        gc.fillText("• AGV #4 (50%): Đang tính toán chi phí...", boardX + 14, rowY);
+                    }
                 }
             });
         }
@@ -1938,6 +2098,7 @@ public class AgvFleetSimulatorApp extends Application {
             public void onBidSubmitted(String taskId, double cost, double battery) {
                 metricsCollector.recordBidSubmitted();
                 cnpVisualBids.put(nodeId, cost);
+                cnpVisualBidBatteries.put(nodeId, battery);
                 addLiveFeed(String.format(Locale.US, "AGV #%d nộp thầu %s (c=%.1f)", nodeId, taskId, cost), Color.web("#8B5CF6"));
                 if (perNodePanel != null) perNodePanel.recordEvent(nodeId, String.format(Locale.US, "Nộp thầu %s (cost=%.2f, pin=%.0f%%)", taskId, cost, battery));
             }
@@ -1950,9 +2111,9 @@ public class AgvFleetSimulatorApp extends Application {
                 if (timelinePanel != null) timelinePanel.recordEvent(nodeId, TimelinePanel.EventCategory.TASK_WON, "Trúng thầu " + task.getTaskId());
                 if (scenarioController.isRunning() && scenarioController.getActiveScenario() == UiScenarioType.S2_ADAPTIVE_AUCTION) {
                     Platform.runLater(() -> {
-                        boolean agv5Bid = cnpVisualBids.containsKey(5L);
+                        boolean lowBatteryBid = (s2VehicleCount == 4) ? cnpVisualBids.containsKey(2L) : false;
                         double winnerCost = cnpVisualBids.getOrDefault(nodeId, 0.0);
-                        UiScenarioResult res = scenarioController.finishS2Scenario(nodeId, winnerCost, agv5Bid);
+                        UiScenarioResult res = scenarioController.finishS2Scenario(nodeId, winnerCost, lowBatteryBid, s2VehicleCount);
                         scenarioBannerOverlay.showVerdict(res);
                     });
                 }

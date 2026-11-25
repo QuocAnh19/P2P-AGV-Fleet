@@ -131,6 +131,10 @@ public class UiScenarioController {
     }
 
     public void startS2Scenario() {
+        startS2Scenario(4);
+    }
+
+    public void startS2Scenario(int vehicleCount) {
         this.activeScenario = UiScenarioType.S2_ADAPTIVE_AUCTION;
         this.running = true;
         this.currentStep = 1;
@@ -139,7 +143,9 @@ public class UiScenarioController {
 
         metricsCollector.reset();
 
-        String banner = "Bước 1/3: Khởi tạo 5 xe với các mức pin: AGV 1 (90%), AGV 2 (60%), AGV 3 (40%), AGV 4 (20%), AGV 5 (10%).";
+        String banner = (vehicleCount == 2)
+                ? "Bước 1/3: Khởi tạo 2 xe: AGV 1 (Pin 90% - Phát thầu), AGV 2 (Pin 80% - Nhận việc)."
+                : "Bước 1/3: Khởi tạo 4 xe với mức pin khác biệt: AGV 1 (90%), AGV 2 (10% - Pin yếu), AGV 3 (85%), AGV 4 (50%).";
         notifyStarted(UiScenarioType.S2_ADAPTIVE_AUCTION, banner);
     }
 
@@ -155,18 +161,30 @@ public class UiScenarioController {
         }
     }
 
-    public UiScenarioResult finishS2Scenario(long winnerNodeId, double winnerCost, boolean agv5Bid) {
+    public UiScenarioResult finishS2Scenario(long winnerNodeId, double winnerCost, boolean lowBatteryBid) {
+        return finishS2Scenario(winnerNodeId, winnerCost, lowBatteryBid, 4);
+    }
+
+    public UiScenarioResult finishS2Scenario(long winnerNodeId, double winnerCost, boolean lowBatteryBid, int vehicleCount) {
         this.running = false;
-        boolean passed = winnerNodeId > 0 && winnerNodeId != 5 && !agv5Bid;
+        boolean passed;
+        if (vehicleCount == 2) {
+            passed = (winnerNodeId == 2L);
+        } else {
+            passed = (winnerNodeId > 0 && winnerNodeId != 2L && !lowBatteryBid);
+        }
 
         String summary = passed
-                ? String.format("THÀNH CÔNG (PASS): AGV %d thắng thầu với điểm chi phí tối ưu %.2f. Xe pin yếu AGV 5 (10%% <= 15%%) từ chối nộp thầu đúng đặc tả.", winnerNodeId, winnerCost)
-                : String.format("THẤT BẠI (FAIL): Lỗi đấu thầu (winner=%d, AGV5 đã nộp thầu=%b).", winnerNodeId, agv5Bid);
+                ? (vehicleCount == 2
+                    ? String.format("THÀNH CÔNG (PASS): AGV %d thắng thầu với điểm chi phí tối ưu %.2f và đã nhận nhiệm vụ.", winnerNodeId, winnerCost)
+                    : String.format("THÀNH CÔNG (PASS): AGV %d thắng thầu với chi phí %.2f (Pin 85%%, cự ly gần). AGV 2 pin yếu (10%% <= 15%%) từ chối nộp thầu đúng chuẩn an toàn.", winnerNodeId, winnerCost))
+                : String.format("THẤT BẠI (FAIL): Đấu thầu không đạt tiêu chuẩn (winner=%d, xe pin yếu nộp thầu=%b).", winnerNodeId, lowBatteryBid);
 
         Map<String, Object> extra = new HashMap<>();
+        extra.put("vehicleCount", vehicleCount);
         extra.put("winnerNodeId", winnerNodeId);
         extra.put("winnerCost", winnerCost);
-        extra.put("agv5Rejected", !agv5Bid);
+        extra.put("lowBatteryBid", lowBatteryBid);
 
         UiScenarioResult result = new UiScenarioResult(
                 UiScenarioType.S2_ADAPTIVE_AUCTION,
