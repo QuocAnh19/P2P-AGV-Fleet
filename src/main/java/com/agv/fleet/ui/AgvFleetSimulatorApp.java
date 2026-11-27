@@ -212,7 +212,7 @@ public class AgvFleetSimulatorApp extends Application {
     private final Map<Long, Deque<Position2D>> robotTrails = new ConcurrentHashMap<>();
     private final Map<Long, Long> crashTimestamps = new ConcurrentHashMap<>();
     private final Map<Long, Long> robotIdleSinceMs = new ConcurrentHashMap<>();
-    private volatile boolean patrolEnabled = true;
+    private volatile boolean patrolEnabled = false;
 
     @Override
     public void start(Stage primaryStage) {
@@ -323,7 +323,7 @@ public class AgvFleetSimulatorApp extends Application {
                 },
                 task -> Platform.runLater(() -> onSingleCycleCompleted(task)),
                 2000, 42L);
-        autoDriver.setContinuous(true);
+        autoDriver.setRemainingCycles(1);
         autoDriver.start();
 
         // 6. Start Render & Simulation loops
@@ -410,11 +410,11 @@ public class AgvFleetSimulatorApp extends Application {
 
         controlGroup.getChildren().addAll(pauseFleetBtn, stepModeBtn, speedLabel, speedSlider, speedValLabel);
 
-        // 3. Group: Demo tự động
-        autoDemoBtn = new ToggleButton("⏹ Dừng Auto Demo");
+        // 3. Group: Demo tự động (Mặc định chạy 1 chu kỳ rồi dừng để phân tích)
+        autoDemoBtn = new ToggleButton("⏹ Dừng chu kỳ");
         autoDemoBtn.setSelected(true);
-        autoDemoBtn.setStyle("-fx-background-color: #10B981; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
-        Tooltip.install(autoDemoBtn, new Tooltip("Đội xe đang tự động nhận việc và di chuyển liên tục. Bấm để dừng [Phím C]"));
+        autoDemoBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+        Tooltip.install(autoDemoBtn, new Tooltip("Đang chạy 1 chu kỳ mục tiêu rồi tự dừng để phân tích P2P. Bấm để dừng [Phím C]"));
         autoDemoBtn.setOnAction(e -> toggleAutoDemo());
 
         // 4. Group: Trình chiếu
@@ -443,6 +443,7 @@ public class AgvFleetSimulatorApp extends Application {
         ToggleGroup autoModeGroup = new ToggleGroup();
         RadioMenuItem singleCycleItem = new RadioMenuItem("Chế độ: Chạy 1 chu kỳ (Dừng phân tích)");
         singleCycleItem.setToggleGroup(autoModeGroup);
+        singleCycleItem.setSelected(true);
         singleCycleItem.setOnAction(e -> {
             if (autoDriver != null) {
                 autoDriver.setRemainingCycles(0);
@@ -458,7 +459,6 @@ public class AgvFleetSimulatorApp extends Application {
 
         RadioMenuItem continuousItem = new RadioMenuItem("Chế độ: Chạy liên tục (Continuous)");
         continuousItem.setToggleGroup(autoModeGroup);
-        continuousItem.setSelected(true);
         continuousItem.setOnAction(e -> {
             if (autoDriver != null) {
                 autoDriver.setContinuous(true);
@@ -2130,8 +2130,16 @@ public class AgvFleetSimulatorApp extends Application {
         }
         initFleet();
         if (autoDriver != null) {
-            autoDriver.setContinuous(true);
-            autoDriver.setEnabled(true);
+            if (autoDriver.isContinuous()) {
+                autoDriver.setContinuous(true);
+            } else {
+                autoDriver.setRemainingCycles(1);
+                if (autoDemoBtn != null) {
+                    autoDemoBtn.setSelected(true);
+                    autoDemoBtn.setText("⏹ Dừng chu kỳ");
+                    autoDemoBtn.setStyle("-fx-background-color: #F59E0B; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 11px; -fx-padding: 4 10 4 10; -fx-cursor: hand; -fx-background-radius: 5px;");
+                }
+            }
         }
     }
 
